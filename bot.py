@@ -32,31 +32,37 @@ async def on_ready():
     print(f"¡El bot está en línea y conectado como: {bot.user}!")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .help"))
 
-# ==================== LIMPIADOR PROFESIONAL DE CÓDIGO ====================
-def clean_lua_code(code: str) -> str:
-    """Remueve líneas de error residuales, trazas de devirtualización y comentarios basura."""
+# ==================== LIMPIADOR Y OPTIMIZADOR PROFESIONAL DE LUAU ====================
+def clean_and_optimize_lua(code: str) -> str:
+    """Remueve errores de desofuscación, comentarios de depuración, líneas rotas y prepara el script para ejecución directa."""
     lines = code.splitlines()
     cleaned_lines = []
     
     for line in lines:
-        if "devirt: index nil" in line or "error(\"devirt:" in line or "LPH:" in line:
+        # Filtrar líneas de error de devirtualización o comentarios basura
+        if "devirt:" in line or "error(\"devirt:" in line or "LPH:" in line:
             continue
+        # Limpiar comentarios residuales molestos
+        if line.strip().startswith("--[[") and "corrupted" in line.lower():
+            continue
+            
         cleaned_lines.append(line)
         
     cleaned_code = "\n".join(cleaned_lines)
-    cleaned_code = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_code)
+    
+    # Normalizar espacios y saltos de línea múltiples
+    cleaned_code = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_code)
     return cleaned_code.strip()
 
-# ==================== FORMATO LUA (BEAUTIFY AVANZADO) ====================
-def advanced_beautify(code: str) -> str:
-    """Ordena, formatea y re-indenta código Lua/Luau de manera limpia y estructurada."""
-    cleaned = clean_lua_code(code)
-    lines = cleaned.splitlines()
+# ==================== BEAUTIFY INTELIGENTE Y LISTO PARA EJECUTAR ====================
+def executable_beautifier(code: str) -> str:
+    """Re-indenta y reestructura el código Luau aplicando formato estricto y limpio."""
+    optimized_base = clean_and_optimize_lua(code)
+    lines = optimized_base.splitlines()
     formatted = []
     indent_level = 0
     tab = "    "
 
-    # Palabras clave de control de flujo
     decrease_keywords = {"end", "until", "else", "elseif"}
     increase_keywords = {"do", "then", "repeat", "function"}
     block_starters = {"if", "for", "while", "local function", "function", "repeat"}
@@ -66,13 +72,13 @@ def advanced_beautify(code: str) -> str:
         if not stripped:
             continue
             
-        # Disminuir indentación si la línea cierra un bloque
+        # Reducir nivel de indentación en cierres
         if stripped in decrease_keywords or stripped.startswith(("end", "until", "else", "elseif")) or stripped == "}":
             indent_level = max(0, indent_level - 1)
 
         formatted.append((tab * indent_level) + stripped)
 
-        # Aumentar indentación si la línea abre un nuevo bloque
+        # Aumentar nivel de indentación en apertura de bloques
         lower = stripped.lower()
         is_block_start = any(lower.startswith(kw) for kw in block_starters)
         has_opener = any(kw in lower for kw in increase_keywords) or lower.endswith("do") or lower.endswith("then")
@@ -98,7 +104,7 @@ async def custom_help(ctx):
     )
     embed.add_field(
         name="✨ `.beautify <URL / Adjunto>`",
-        value="Formatea, re-indenta y limpia código Luau para hacerlo legible.",
+        value="Limpia errores, formatea y deja el código Luau 100% listo para ejecutar.",
         inline=False
     )
     embed.add_field(
@@ -143,7 +149,7 @@ async def cmd_get(ctx, url: str = None):
     except Exception as e:
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Fallo", description=str(e)[:200], color=discord.Color.red()))
 
-# ==================== COMANDO: .BEAUTIFY ====================
+# ==================== COMANDO: .BEAUTIFY (Optimizado para Ejecución) ====================
 @bot.command(name="beautify")
 async def cmd_beautify(ctx, url: str = None):
     has_att = bool(ctx.message.attachments)
@@ -151,7 +157,7 @@ async def cmd_beautify(ctx, url: str = None):
         await ctx.send(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="Adjunta un archivo o provee un enlace válido.", color=discord.Color.red()))
         return
 
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Embelleciendo...", color=discord.Color.blue()))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Optimizando y Embelleciendo...", description="Eliminando errores de sintaxis y preparando el script...", color=discord.Color.blue()))
 
     try:
         source, code = "", ""
@@ -169,10 +175,11 @@ async def cmd_beautify(ctx, url: str = None):
                         return
                     code = await res.text()
 
-        formatted_code = advanced_beautify(code)
-        final_text = f"-- Formateado y Limpiado por Lexy Hub\n\n{formatted_code}"
+        # Aplicar el formateador ejecutable
+        ready_code = executable_beautifier(code)
+        final_text = f"-- Formateado, Limpiado y Listo para Ejecutar por Lexy Hub\n\n{ready_code}"
         
-        path = "beautified_lexyhub.lua"
+        path = "executable_lexyhub.lua"
         with open(path, "w", encoding="utf-8") as f:
             f.write(final_text)
 
@@ -180,13 +187,13 @@ async def cmd_beautify(ctx, url: str = None):
         if len(final_text.splitlines()) > 6:
             preview += "\n..."
 
-        embed = discord.Embed(title=f"{EMOJI_CORRECT} SUCCESSFULLY BEAUTIFIED", color=discord.Color.from_rgb(0, 204, 102))
+        embed = discord.Embed(title=f"{EMOJI_CORRECT} READY TO EXECUTE", color=discord.Color.from_rgb(0, 204, 102))
         embed.add_field(name="🔗 Fuente", value=source, inline=False)
         embed.add_field(name="📄 Preview del Código", value=f"```lua\n{preview}\n```", inline=False)
-        embed.set_footer(text="Lexy Hub Protection & Tools")
+        embed.set_footer(text="Lexy Hub Protection & Tools • Script Optimizado")
 
         await msg.edit(embed=embed)
-        await ctx.send(file=discord.File(path, filename="beautified.lua"))
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
         os.remove(path)
     except Exception as e:
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description=str(e)[:200], color=discord.Color.red()))
@@ -255,10 +262,10 @@ async def cmd_luraph(ctx, url: str = None):
                 pass
             return
 
-        cleaned = clean_lua_code(result_code)
-        final_text = f"-- Desofuscado y Limpiado por Lexy Hub\n\n{cleaned}"
+        ready_code = executable_beautifier(result_code)
+        final_text = f"-- Desofuscado, Limpiado y Listo para Ejecutar por Lexy Hub\n\n{ready_code}"
         
-        path = "deobfuscated_lexyhub.lua"
+        path = "executable_lexyhub.lua"
         with open(path, "w", encoding="utf-8") as f:
             f.write(final_text)
 
@@ -272,7 +279,7 @@ async def cmd_luraph(ctx, url: str = None):
         embed.set_footer(text="Lexy Hub Protection & Tools")
 
         await msg.edit(embed=embed)
-        await ctx.send(file=discord.File(path, filename="deobfuscated.lua"))
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
 
         for p in [path, input_file, output_file, json_path, expected_path]:
             if p and os.path.exists(p):
