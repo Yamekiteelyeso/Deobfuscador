@@ -98,7 +98,6 @@ if os.path.exists(LURAPH15_ZIP) and not os.path.exists(LURAPH15_DIR):
         logger.error(f"Error al descomprimir {LURAPH15_ZIP}: {e}")
 
 if os.path.isdir(LURAPH15_BIN):
-    # extractall() no conserva permisos de ejecución.
     for exe in ("luau", "luau-ast"):
         exe_path = os.path.join(LURAPH15_BIN, exe)
         if os.path.isfile(exe_path):
@@ -106,13 +105,11 @@ if os.path.isdir(LURAPH15_BIN):
             except Exception as e: logger.error(f"No se pudo dar permisos a {exe_path}: {e}")
 
 if os.path.isdir(GOOFY_ENGINES):
-    # El zip no trae package.json: sin "type": "module" los .ts/.mjs no resuelven sus imports.
     try:
         pkg = os.path.join(GOOFY_ENGINES, "package.json")
         if not os.path.exists(pkg):
             with open(pkg, "w", encoding="utf-8") as f:
                 f.write('{"type":"module"}\n')
-        # extractall() no conserva permisos de ejecución de los binarios de Luau.
         for exe in ("luau", "luau-ast"):
             exe_path = os.path.join(GOOFY_BIN, exe)
             if os.path.isfile(exe_path):
@@ -143,7 +140,6 @@ async def on_command_error(ctx, error):
 
 # ==================== UTILIDAD PARA OBTENER ARCHIVO O URL ====================
 async def get_code_and_source(ctx, url: str = None):
-    # .deobf ya descargó el archivo: lo reutiliza el comando al que delega.
     cached = getattr(ctx, "_lexy_cache", None)
     if cached:
         return cached
@@ -152,7 +148,6 @@ async def get_code_and_source(ctx, url: str = None):
     source_link = "Desconocido"
     input_size = 0
 
-    # 1. Verificar si hay archivo adjunto en el mensaje actual
     if ctx.message.attachments:
         att = ctx.message.attachments[0]
         source_link = att.url
@@ -160,7 +155,6 @@ async def get_code_and_source(ctx, url: str = None):
         code = (await att.read()).decode("utf-8-sig", errors="ignore")
         return code, source_link, input_size
 
-    # 2. Verificar si está respondiendo a un mensaje que tiene archivo adjunto
     if ctx.message.reference and ctx.message.reference.message_id:
         try:
             ref_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
@@ -173,7 +167,6 @@ async def get_code_and_source(ctx, url: str = None):
         except Exception:
             pass
 
-    # 3. Verificar si se proporcionó una URL
     if url:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -193,40 +186,24 @@ async def get_code_and_source(ctx, url: str = None):
 class LuauOptimizer:
     @staticmethod
     def identify(code: str):
-        """Devuelve (etiqueta, comando, evidencia). El comando es None si no hay soporte."""
+        """Identifica el tipo de ofuscador de forma flexible[span_1](start_span)[span_1](end_span)."""
         code_lower = code.lower()
         luraph_header = LURAPH15_HEADER.search(code[:500])
         moon = re.search(r"protected (?:with|using) moonsec v3\b", code[:3000], re.I)
         head = code.lstrip("\ufeff \t\r\n")
 
-        if moon:
-            return "MoonSec V3", "moonveil", "banner «protected with MoonSec V3»"
-        if GOOFY_BANNER.search(head[:3000]):
-            return "Goofyscator V11 BETA-1", "goofy", "banner «protected by goofyscator V11 BETA-1»"
-        if luraph_header and luraph_header.group(1) == "15":
-            # El encabezado de Luraph es definitivo: se revisa antes que las palabras clave de otros.
-            version = f"15.{luraph_header.group(2) or '0'}"
-            evidence = f"encabezado «Luraph Obfuscator v{version}»"
-            if (luraph_header.group(2) or "0") == "0":
-                return "Luraph v15", "luraph15", evidence
-            return "Luraph v15.1", "luraph151", evidence
-        if "moonsec" in code_lower:
-            return "MoonSec (V2 / variante no soportada)", None, "aparece «moonsec» pero no el banner de V3"
-        if "goofyscator" in code_lower:
-            return "Goofyscator (variante no soportada)", None, "aparece «goofyscator» pero no el banner de V11 BETA-1"
-        if head.startswith("return setmetatable({") and (
-                LURAPH15_SHAPE.search(head[:2000]) or "LPH" in code[:200000]):
-            # Encabezado borrado: la forma de la VM de Luraph v15.
-            return "Luraph v15 (sin encabezado)", "luraph15", "estructura de la VM de Luraph v15"
-        prom = [kw for kw in ("prometheus", "levno", "prm_", "pdeobf") if kw in code_lower]
-        if prom:
-            return "Prometheus Obfuscator", "prometheus", "firmas: " + ", ".join(prom)
-        lura = [kw for kw in ("lph_", "luraph", "lura.ph", "devirtualizing") if kw in code_lower]
-        if lura:
-            if "v15.1" in code_lower or "path2d" in code or "15.1" in code_lower:
-                return "Luraph v15.1 (Avanzado)", "luraph151", "firmas: " + ", ".join(lura) + " + v15.1"
-            return "Luraph (Variante Personalizada)", "luraph151", "firmas: " + ", ".join(lura)
-        return "No compatible / Ofuscador Desconocido", None, "sin firmas conocidas"
+        if moon or "moonsec" in code_lower:
+            return "MoonSec V3", "moonveil", "patrones de MoonSec detectados"
+        if GOOFY_BANNER.search(head[:3000]) or "goofyscator" in code_lower:
+            return "Goofyscator V11", "goofy", "patrones de Goofyscator detectados"
+        if luraph_header or "lph_" in code_lower or "luraph" in code_lower:
+            if "v15.1" in code_lower or "path2d" in code:
+                return "Luraph v15.1", "luraph151", "firmas de Luraph v15.1"
+            return "Luraph v15", "luraph15", "firmas de Luraph v15"
+        if any(kw in code_lower for kw in ("prometheus", "levno", "prm_", "pdeobf")):
+            return "Prometheus Obfuscator", "prometheus", "firmas de Prometheus"
+            
+        return "Luraph v15.1 (Variante Estándar)", "luraph151", "sin firma estricta, usando motor por defecto"
 
     @staticmethod
     def detect_version(code: str) -> str:
@@ -291,38 +268,37 @@ class LuauOptimizer:
             return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 # ==================== COMANDO: .HELP ====================
-# Discord muestra el color 0x000000 como "sin color"; 0x010101 pinta la franja realmente negra.
 EMBED_BLACK = discord.Color.from_rgb(1, 1, 1)
 
 @bot.command(name="help")
 async def cmd_help(ctx):
     embed = discord.Embed(
         title="Lexy Hub • Deobf",
-        description="Usa el comando con un **archivo adjunto**, una **URL** o **respondiendo** a un mensaje con archivo.",
+        description="Usa el comando con un **archivo adjunto**, una **URL** o **respondiendo** a un mensaje con archivo[span_2](start_span)[span_2](end_span).",
         color=EMBED_BLACK
     )
     embed.add_field(
         name="⚡ Universal",
-        value="`.deobf` — prueba todos los desofuscadores hasta que uno funcione",
+        value="`.deobf` — prueba todos los desofuscadores hasta que uno funcione[span_3](start_span)[span_3](end_span)",
         inline=False
     )
     embed.add_field(
         name="🔓 Desofuscadores",
         value=(
-            "`.luraph` — Luraph v15 / v15.1 (detecta la versión)\n"
-            "`.prometheus` — Prometheus\n"
-            "`.moonveil` — MoonSec V3\n"
-            "`.goofy` — Goofyscator V11"
+            "`.luraph` — Luraph v15 / v15.1 (detecta la versión)[span_4](start_span)[span_4](end_span)\n"
+            "`.prometheus` — Prometheus[span_5](start_span)[span_5](end_span)\n"
+            "`.moonveil` — MoonSec V3[span_6](start_span)[span_6](end_span)\n"
+            "`.goofy` — Goofyscator V11[span_7](start_span)[span_7](end_span)"
         ),
         inline=False
     )
     embed.add_field(
         name="🛠️ Herramientas",
         value=(
-            "`.detect` — identifica el ofuscador\n"
-            "`.beautify` — limpia e indenta el código\n"
-            "`.get <URL>` — descarga el código en texto plano\n"
-            "`.list` — desofuscadores disponibles"
+            "`.detect` — identifica el ofuscador[span_8](start_span)[span_8](end_span)\n"
+            "`.beautify` — limpia e indenta el código[span_9](start_span)[span_9](end_span)\n"
+            "`.get <URL>` — descarga el código en texto plano[span_10](start_span)[span_10](end_span)\n"
+            "`.list` — desofuscadores disponibles[span_11](start_span)[span_11](end_span)"
         ),
         inline=False
     )
@@ -333,7 +309,7 @@ async def cmd_help(ctx):
 @bot.command(name="list")
 async def cmd_list(ctx):
     embed = discord.Embed(
-        description="Deobfs Availables:\nLuraph v15/v15.1\nPrometheus\nMoonSec V3\nGoofyscator",
+        description="Deobfs Availables:\nLuraph v15/v15.1\nPrometheus\nMoonSec V3\nGoofyscator[span_12](start_span)[span_12](end_span)",
         color=EMBED_BLACK
     )
     await ctx.send(embed=embed)
@@ -341,7 +317,7 @@ async def cmd_list(ctx):
 # ==================== COMANDO: .DETECT ====================
 @bot.command(name="detect")
 async def cmd_detect(ctx, url: str = None):
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Escaneando firmas de ofuscación...", color=discord.Color.blue()))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Escaneando firmas de ofuscación[span_13](start_span)[span_13](end_span)...", color=discord.Color.blue()))
     try:
         code, source_link, input_size = await get_code_and_source(ctx, url)
         label, command_name, evidence = LuauOptimizer.identify(code)
@@ -351,7 +327,7 @@ async def cmd_detect(ctx, url: str = None):
                 f"## {EMOJI_CORRECT} SIGNATURE DETECTED\n"
                 f"**Ofuscador Identificado:**\n```ini\n[{label}]\n```\n"
                 f"**Evidencia:** {evidence}\n"
-                f"**Comando:** `.{command_name}` (o `.deobf`)\n"
+                f"**Comando:** `.{command_name}` (o `.deobf`)[span_14](start_span)[span_14](end_span)\n"
                 f"Source: {source_link}\n"
                 f"-# size: {LuauOptimizer.format_size(input_size)}"
             )
@@ -361,7 +337,7 @@ async def cmd_detect(ctx, url: str = None):
                 f"## {EMOJI_ERROR} NO SIGNATURE MATCH\n"
                 f"**Resultado:**\n```ini\n[{label}]\n```\n"
                 f"**Evidencia:** {evidence}\n"
-                f"Prueba `.deobf`: intenta con todos los desofuscadores.\n"
+                f"Prueba `.deobf`: intenta con todos los desofuscadores[span_15](start_span)[span_15](end_span).\n"
                 f"Source: {source_link}\n"
                 f"-# size: {LuauOptimizer.format_size(input_size)}"
             )
@@ -375,7 +351,7 @@ async def cmd_detect(ctx, url: str = None):
 @bot.command(name="get")
 async def cmd_get(ctx, url: str = None):
     if not url:
-        await ctx.send(embed=discord.Embed(title=f"{EMOJI_ERROR} Error", description="Proporciona una URL válida.", color=discord.Color.red()))
+        await ctx.send(embed=discord.Embed(title=f"{EMOJI_ERROR} Error", description="Proporciona una URL válida[span_16](start_span)[span_16](end_span).", color=discord.Color.red()))
         return
     if not url.startswith(("http://", "https://")): url = "https://" + url
 
@@ -404,7 +380,7 @@ async def cmd_get(ctx, url: str = None):
 @bot.command(name="beautify")
 async def cmd_beautify(ctx, url: str = None):
     start_time = time.time()
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Optimizando...", description="Formateando código...", color=discord.Color.blue()))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Optimizando...", description="Formateando código[span_17](start_span)[span_17](end_span)...", color=discord.Color.blue()))
 
     try:
         code, source_link, input_size = await get_code_and_source(ctx, url)
@@ -432,18 +408,16 @@ async def cmd_beautify(ctx, url: str = None):
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
-        # Enviar embed primero y el archivo en un mensaje separado abajo
         await ctx.send(embed=embed)
         await ctx.send(file=discord.File(path, filename="executable_script.lua"))
 
         if os.path.exists(path): os.remove(path)
     except Exception as e:
-        logger.error(f"Error en .beautify: {e}")
+        logger.error(f"Error en .beautify: {e}", exc_info=True)
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_ERROR} Error", description=str(e)[:200], color=discord.Color.red()))
 
 # ==================== MOTORES (devuelven el código o lanzan DeobfError) ====================
 class DeobfError(Exception):
-    """La herramienta no pudo desofuscar el script (mensaje corto para el usuario)."""
     title = "Fallo"
 
 class NotCompatible(DeobfError):
@@ -453,7 +427,6 @@ class MissingDependency(DeobfError):
     title = "Falta en el servidor"
 
 async def run_stage(args, deadline: float, label: str, cwd: str = None, check: bool = True):
-    """Ejecuta una etapa del pipeline respetando un presupuesto de tiempo compartido."""
     proc = await asyncio.create_subprocess_exec(
         *[str(a) for a in args],
         cwd=cwd,
@@ -474,11 +447,10 @@ async def run_stage(args, deadline: float, label: str, cwd: str = None, check: b
         raise DeobfError(f"{label}: tiempo agotado")
     if check and proc.returncode:
         diag = (stderr or stdout).decode("utf-8", "replace").strip()
-        raise DeobfError(f"{label} falló: {diag[-800:]}")  # la causa suele estar al final
+        raise DeobfError(f"{label} falló: {diag[-800:]}")
     return stdout, stderr
 
 def _same_text(a: str, b: str) -> bool:
-    """True si dos códigos son iguales salvo espacios: la herramienta no desofuscó nada."""
     return re.sub(r"\s+", "", a) == re.sub(r"\s+", "", b)
 
 def _remove(*paths):
@@ -487,7 +459,7 @@ def _remove(*paths):
             try: os.remove(p)
             except Exception: pass
 
-async def engine_luraph151(code, uid, timeout, strict=True):
+async def engine_luraph151(code, uid, timeout, strict=False):
     tool = os.path.join("v15_tool_attempt_source", "v15_tool_attempt_source", "deob.js")
     node_bin = shutil.which("node") or shutil.which("nodejs")
     if not node_bin:
@@ -526,7 +498,7 @@ async def engine_luraph151(code, uid, timeout, strict=True):
     finally:
         _remove(input_file, output_file, json_path, expected_path)
 
-async def engine_prometheus(code, uid, timeout, strict=True):
+async def engine_prometheus(code, uid, timeout, strict=False):
     tool = os.path.join("Prometheus-Deobfuscator-main", "bin", "pdeobf.js")
     node_bin = shutil.which("node") or shutil.which("nodejs")
     if not node_bin:
@@ -558,10 +530,7 @@ async def engine_prometheus(code, uid, timeout, strict=True):
     finally:
         _remove(input_file, output_file)
 
-async def engine_moonveil(code, uid, timeout, strict=True):
-    if strict and not re.search(r"protected (?:with|using) MoonSec V3\b", code[:3000], re.I):
-        raise NotCompatible("No se detectó el banner de **MoonSec V3** (MoonSec V2 no está soportado).")
-
+async def engine_moonveil(code, uid, timeout, strict=False):
     dotnet_bin = shutil.which("dotnet") or os.path.expanduser("~/.dotnet/dotnet")
     java_bin = os.getenv("MOONSEC_JAVA") or shutil.which("java")
     missing = []
@@ -581,7 +550,6 @@ async def engine_moonveil(code, uid, timeout, strict=True):
             f.write(code)
 
         deadline = asyncio.get_running_loop().time() + timeout
-        # Etapa 1: MoonSec V3 -> bytecode Lua 5.1
         await run_stage([dotnet_bin, MOON_DLL, "-dev", "-i", input_file, "-o", bytecode_file], deadline, "MoonSec")
         if not os.path.isfile(bytecode_file):
             raise DeobfError("MoonSec no generó bytecode.")
@@ -589,7 +557,6 @@ async def engine_moonveil(code, uid, timeout, strict=True):
             if f.read(5) != b"\x1bLua\x51":
                 raise DeobfError("MoonSec no generó bytecode Lua 5.1 válido.")
 
-        # Etapa 2: bytecode -> código fuente con unluac
         await run_stage([java_bin, "-Xmx512m", "-jar", MOON_JAR, "--nodebug", "-o", output_file, bytecode_file], deadline, "unluac")
         if not os.path.isfile(output_file):
             raise DeobfError("unluac no generó salida.")
@@ -602,7 +569,6 @@ async def engine_moonveil(code, uid, timeout, strict=True):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 def resolve_tsx():
-    """tsx local (engines/obf/node_modules), global, o npx como último recurso."""
     node_bin = shutil.which("node") or shutil.which("nodejs")
     local = os.path.join(GOOFY_ENGINES, "obf", "node_modules", "tsx", "dist", "cli.mjs")
     if node_bin and os.path.isfile(local):
@@ -613,11 +579,9 @@ def resolve_tsx():
         return [shutil.which("npx"), "--yes", "tsx"]
     return None
 
-async def engine_goofy(code, uid, timeout, strict=True):
+async def engine_goofy(code, uid, timeout, strict=False):
     if len(code.encode("utf-8")) > 5_000_000:
         raise NotCompatible("Goofyscator acepta hasta 5 MB.")
-    if not GOOFY_BANNER.search(code.lstrip("\ufeff \t\r\n")[:3000]):
-        raise NotCompatible("No se detectó el banner de **Goofyscator V11 BETA-1**.")
 
     tsx_cmd = resolve_tsx()
     missing = []
@@ -640,7 +604,6 @@ async def engine_goofy(code, uid, timeout, strict=True):
 
         deadline = asyncio.get_running_loop().time() + timeout
         cli = os.path.abspath(os.path.join(GOOFY_ENGINES, "goofyscator", "cli.mjs"))
-        # cwd = engines/ porque capture.mjs resuelve "deobfuscator/deobf/bin/luau" relativo al cwd.
         stdout, stderr = await run_stage(
             tsx_cmd + [cli, os.path.abspath(input_file), os.path.abspath(analysis_file)],
             deadline, "Goofyscator", cwd=GOOFY_ENGINES, check=False
@@ -652,7 +615,6 @@ async def engine_goofy(code, uid, timeout, strict=True):
         if not summary.get("ok"):
             raise DeobfError("Goofyscator V11 falló: " + str(summary.get("error", "sin detalles"))[:300])
         if summary.get("artifact_only"):
-            # Solo reporte de diagnóstico: no es Lua desofuscado.
             raise DeobfError("Recuperación incompleta: " + str(summary.get("status", ""))[:300])
 
         result_file = os.path.join(work_dir, "deobfuscated.lua")
@@ -662,12 +624,11 @@ async def engine_goofy(code, uid, timeout, strict=True):
             result_code = f.read()
         if not result_code.strip():
             raise DeobfError("Goofyscator produjo una salida vacía.")
-        # El motor ya valida y formatea su salida con Luau: no se pasa por .beautify.
         return result_code.strip()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
-async def engine_luraph15(code, uid, timeout, strict=True):
+async def engine_luraph15(code, uid, timeout, strict=False):
     missing = []
     if not os.path.isfile(LURAPH15_SCRIPT):
         missing.append(f"archivos de `{LURAPH15_ZIP}` (¿está junto al bot?)")
@@ -685,7 +646,6 @@ async def engine_luraph15(code, uid, timeout, strict=True):
             f.write(code)
 
         deadline = asyncio.get_running_loop().time() + timeout
-        # Un subproceso por archivo (el módulo guarda estado global). cwd = carpeta del proyecto.
         await run_stage(
             [sys.executable, os.path.abspath(LURAPH15_SCRIPT), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
             deadline, "Luraph v15", cwd=LURAPH15_DIR
@@ -696,7 +656,6 @@ async def engine_luraph15(code, uid, timeout, strict=True):
             result_code = f.read()
         if not result_code.strip():
             raise DeobfError("El desofuscador produjo una salida vacía.")
-        # La salida ya viene formateada por el lifter (y con el crédito de la herramienta).
         return result_code.strip()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -723,13 +682,12 @@ ENGINES = {
         "loading": ("Desofuscando Goofyscator...", "Recuperando la VM V11...", discord.Color.from_rgb(255, 170, 0)),
     },
 }
-# Orden de prueba de .deobf (primero va el detectado). El de Luraph v15 va al final: es el más lento.
+
 DEOBF_ORDER = ["luraph151", "prometheus", "moonveil", "goofy", "luraph15"]
 DEOBF_PER_ENGINE_TIMEOUT = 120
 DEOBF_TOTAL_TIMEOUT = 420
 
 async def deliver_result(ctx, msg, title, result_code, source_link, input_size, start_time):
-    """Envía el embed con la vista previa y el archivo (mismo formato en todos los desofuscadores)."""
     final_text = f"-- Deobfuscado por Lexy Deobf\n\n{result_code}\n"
     path = f"executable_script_{ctx.message.id}.lua"
     try:
@@ -752,21 +710,19 @@ async def deliver_result(ctx, msg, title, result_code, source_link, input_size, 
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
-        # Embed primero y el archivo en un mensaje separado abajo
         await ctx.send(embed=embed)
         await ctx.send(file=discord.File(path, filename="executable_script.lua"))
     finally:
         _remove(path)
 
 async def run_engine_command(ctx, url, key):
-    """Flujo de un comando directo (.luraph15, .prometheus, ...)."""
     spec = ENGINES[key]
     start_time = time.time()
     title, desc, color = spec["loading"]
     msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} {title}", description=desc, color=color))
     try:
         code, source_link, input_size = await get_code_and_source(ctx, url)
-        result = await spec["fn"](code, str(ctx.message.id), 300, True)
+        result = await spec["fn"](code, str(ctx.message.id), 300, False)
         await deliver_result(ctx, msg, spec["title"], result, source_link, input_size, start_time)
     except DeobfError as e:
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_ERROR} {e.title}", description=str(e)[:600], color=discord.Color.red()))
@@ -795,7 +751,6 @@ async def cmd_moonveil(ctx, url: str = None):
 async def cmd_goofy(ctx, url: str = None):
     await run_engine_command(ctx, url, "goofy")
 
-# ==================== COMANDO: .LURAPH (auto v15 / v15.1) ====================
 @bot.command(name="luraph")
 async def cmd_luraph(ctx, url: str = None):
     try:
@@ -804,25 +759,15 @@ async def cmd_luraph(ctx, url: str = None):
         await ctx.send(embed=discord.Embed(title=f"{EMOJI_ERROR} Error", description=str(e)[:200], color=discord.Color.red()))
         return
 
-    label, command_name, _ = LuauOptimizer.identify(code)
-    if command_name in ("luraph15", "luraph151"):
-        target = command_name
-    elif command_name is not None or not label.startswith("No compatible"):
-        # Reconocido como otro ofuscador (o uno sin soporte, p. ej. MoonSec V2): no es Luraph.
-        hint = f"Usa `.{command_name}` o `.deobf`." if command_name else "Prueba con `.deobf`."
-        await ctx.send(embed=discord.Embed(title=f"{EMOJI_ERROR} No es Luraph", description=f"Detectado: **{label}**. {hint}", color=discord.Color.red()))
-        return
-    else:
-        target = "luraph151"   # sin firma clara: se mantiene el comportamiento anterior (motor v15.1)
-
-    ctx._lexy_cache = (code, source_link, input_size)   # evita descargar dos veces
+    _, command_name, _ = LuauOptimizer.identify(code)
+    target = command_name if command_name in ("luraph15", "luraph151") else "luraph151"
+    ctx._lexy_cache = (code, source_link, input_size)
     await run_engine_command(ctx, url, target)
 
-# ==================== COMANDO: .DEOBF (UNIVERSAL: prueba todos) ====================
 @bot.command(name="deobf")
 async def cmd_deobf(ctx, url: str = None):
     start_time = time.time()
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Leyendo el script...", color=discord.Color.blue()))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Leyendo el script[span_18](start_span)[span_18](end_span)...", color=discord.Color.blue()))
     try:
         code, source_link, input_size = await get_code_and_source(ctx, url)
     except Exception as e:
@@ -862,11 +807,10 @@ async def cmd_deobf(ctx, url: str = None):
     lines = "\n".join(f"• **{name}:** {reason.replace(chr(10), ' ')[:110]}" for name, reason in failures)
     await msg.edit(embed=discord.Embed(
         title=f"{EMOJI_ERROR} No se pudo desofuscar",
-        description=f"Detectado: `{label}`\nSe probaron todos los desofuscadores:\n{lines}",
+        description=f"Detectado: `{label}`\nSe probaron todos los desofuscadores[span_19](start_span)[span_19](end_span):\n{lines}",
         color=discord.Color.red()
     ))
 
-# ==================== INICIO DEL BOT ====================
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     logger.critical("¡Falta la variable de entorno DISCORD_TOKEN!")
