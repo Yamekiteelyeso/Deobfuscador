@@ -71,6 +71,49 @@ async def on_command_error(ctx, error):
         return
     logger.error(f"Error en comando: {error}")
 
+# ==================== UTILIDAD PARA OBTENER ARCHIVO O URL ====================
+async def get_code_and_source(ctx, url: str = None):
+    code = ""
+    source_link = "Desconocido"
+    input_size = 0
+
+    # 1. Verificar si hay archivo adjunto en el mensaje actual
+    if ctx.message.attachments:
+        att = ctx.message.attachments[0]
+        source_link = att.url
+        input_size = att.size
+        code = (await att.read()).decode("utf-8", errors="ignore")
+        return code, source_link, input_size
+
+    # 2. Verificar si está respondiendo a un mensaje que tiene archivo adjunto
+    if ctx.message.reference and ctx.message.reference.message_id:
+        try:
+            ref_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref_msg.attachments:
+                att = ref_msg.attachments[0]
+                source_link = att.url
+                input_size = att.size
+                code = (await att.read()).decode("utf-8", errors="ignore")
+                return code, source_link, input_size
+        except Exception:
+            pass
+
+    # 3. Verificar si se proporcionó una URL
+    if url:
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        source_link = url
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=15) as res:
+                if res.status != 200:
+                    raise Exception(f"Error HTTP al acceder a la URL: {res.status}")
+                data = await res.read()
+                input_size = len(data)
+                code = data.decode("utf-8", errors="ignore")
+        return code, source_link, input_size
+
+    raise Exception("No se encontró ningún archivo adjunto, mensaje respondido con archivo ni URL válida.")
+
 # ==================== MOTOR DE OPTIMIZACIÓN Y LIMPIEZA PROFUNDA ====================
 class LuauOptimizer:
     @staticmethod
@@ -153,40 +196,47 @@ async def cmd_help(ctx):
         description="Suite avanzada para desofuscar, detectar y optimizar scripts de Luau (Luraph & Prometheus).",
         color=discord.Color.from_rgb(25, 25, 35)
     )
-    embed.add_field(name="🔍 `.detect <URL / Adjunto>`", value="Identifica si el script usa Luraph o Prometheus.", inline=False)
-    embed.add_field(name="🔓 `.luraph <URL / Adjunto>`", value="Desofusca scripts de Luraph v15/v15.1.", inline=False)
-    embed.add_field(name="🔥 `.prometheus <URL / Adjunto>`", value="Desofusca scripts protegidos con Prometheus.", inline=False)
-    embed.add_field(name="✨ `.beautify <URL / Adjunto>`", value="Limpia errores y re-indenta código Luau.", inline=False)
+    embed.add_field(name="🔍 `.detect <URL / Adjunto / Responder>`", value="Identifica el ofuscador del script.", inline=False)
+    embed.add_field(name="🔓 `.luraph <URL / Adjunto / Responder>`", value="Desofusca scripts de Luraph v15/v15.1.", inline=False)
+    embed.add_field(name="🔥 `.prometheus <URL / Adjunto / Responder>`", value="Desofusca scripts protegidos con Prometheus.", inline=False)
+    embed.add_field(name="📋 `.list`", value="Muestra la lista de desofuscadores y herramientas integradas.", inline=False)
+    embed.add_field(name="✨ `.beautify <URL / Adjunto / Responder>`", value="Limpia errores y re-indenta código Luau.", inline=False)
     embed.add_field(name="📥 `.get <URL>`", value="Recupera código fuente en texto plano desde enlaces externos.", inline=False)
     embed.set_footer(text="Lexy Hub Security • Enterprise Grade")
+    await ctx.send(embed=embed)
+
+# ==================== COMANDO: .LIST ====================
+@bot.command(name="list")
+async def cmd_list(ctx):
+    embed = discord.Embed(
+        title="📂 Lexy Hub — Desofuscadores Disponibles",
+        description="Lista actual de motores de ingeniería inversa integrados en el sistema:",
+        color=discord.Color.from_rgb(0, 204, 102)
+    )
+    embed.add_field(
+        name="1️⃣ Luraph Deobfuscator",
+        value="• **Versiones:** v15 y v15.1\n• **Comando:** `.luraph` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
+        inline=False
+    )
+    embed.add_field(
+        name="2️⃣ Prometheus Deobfuscator",
+        value="• **Versiones:** CLI Estándar\n• **Comando:** `.prometheus` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
+        inline=False
+    )
+    embed.add_field(
+        name="3️⃣ Luau Beautifier & Fixer",
+        value="• **Función:** Limpieza y optimización\n• **Comando:** `.beautify` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
+        inline=False
+    )
+    embed.set_footer(text="Lexy Hub Security • Herramientas de Alto Rendimiento")
     await ctx.send(embed=embed)
 
 # ==================== COMANDO: .DETECT ====================
 @bot.command(name="detect")
 async def cmd_detect(ctx, url: str = None):
-    has_att = bool(ctx.message.attachments)
-    if not has_att and not url:
-        await ctx.send(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="Adjunta un archivo o provee una URL.", color=discord.Color.red()))
-        return
-
     msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Escaneando firmas de ofuscación...", color=discord.Color.blue()))
-
     try:
-        source_link, code = "Archivo adjunto", ""
-        if has_att:
-            att = ctx.message.attachments[0]
-            source_link = att.url
-            code = (await att.read()).decode("utf-8", errors="ignore")
-        else:
-            if not url.startswith(("http://", "https://")): url = "https://" + url
-            source_link = url
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=15) as res:
-                    if res.status != 200:
-                        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error HTTP", color=discord.Color.red()))
-                        return
-                    code = (await res.read()).decode("utf-8", errors="ignore")
-
+        code, source_link, _ = await get_code_and_source(ctx, url)
         detected = LuauOptimizer.detect_version(code)
         embed_desc = (
             f"## {EMOJI_CORRECT} SIGNATURE DETECTED\n"
@@ -230,37 +280,15 @@ async def cmd_get(ctx, url: str = None):
 # ==================== COMANDO: .BEAUTIFY ====================
 @bot.command(name="beautify")
 async def cmd_beautify(ctx, url: str = None):
-    has_att = bool(ctx.message.attachments)
-    if not has_att and not url:
-        await ctx.send(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="Adjunta un archivo o provee un enlace.", color=discord.Color.red()))
-        return
-
     start_time = time.time()
     msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Optimizando...", description="Formateando código...", color=discord.Color.blue()))
 
     try:
-        source_link, code = "Archivo adjunto", ""
-        if has_att:
-            att = ctx.message.attachments[0]
-            source_link = att.url
-            input_size = att.size
-            code = (await att.read()).decode("utf-8", errors="ignore")
-        else:
-            if not url.startswith(("http://", "https://")): url = "https://" + url
-            source_link = url
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=15) as res:
-                    if res.status != 200:
-                        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", color=discord.Color.red()))
-                        return
-                    data = await res.read()
-                    input_size = len(data)
-                    code = data.decode("utf-8", errors="ignore")
-
+        code, source_link, input_size = await get_code_and_source(ctx, url)
         ready_code = LuauOptimizer.beautify(code)
         final_text = f"-- Deobfuscado por Lexy Deobf\n\n{ready_code}"
 
-        path = "executable_script.lua"
+        path = f"executable_script_{ctx.author.id}.lua"
         with open(path, "w", encoding="utf-8") as f: f.write(final_text)
 
         output_size = os.path.getsize(path)
@@ -281,7 +309,10 @@ async def cmd_beautify(ctx, url: str = None):
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
-        await ctx.send(embed=embed, file=discord.File(path, filename="executable_script.lua"))
+        # Enviar embed primero y el archivo en un mensaje separado abajo
+        await ctx.send(embed=embed)
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
+
         if os.path.exists(path): os.remove(path)
     except Exception as e:
         logger.error(f"Error en .beautify: {e}")
@@ -290,36 +321,17 @@ async def cmd_beautify(ctx, url: str = None):
 # ==================== COMANDO: .LURAPH ====================
 @bot.command(name="luraph")
 async def cmd_luraph(ctx, url: str = None):
+    start_time = time.time()
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando Luraph...", description="Procesando capas de virtualización...", color=discord.Color.from_rgb(0, 128, 255)))
+
     input_file = f"input_{ctx.author.id}.lua"
     output_file = f"output_{ctx.author.id}.lua"
     out_dir = "output"
 
-    has_att = bool(ctx.message.attachments)
-    if not has_att and not url:
-        await ctx.send(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="Falta archivo adjunto o enlace.", color=discord.Color.red()))
-        return
-
-    start_time = time.time()
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando Luraph...", description="Procesando capas de virtualización...", color=discord.Color.from_rgb(0, 128, 255)))
-
     try:
-        source_link = "Archivo adjunto"
-        if has_att:
-            att = ctx.message.attachments[0]
-            await att.save(input_file)
-            source_link = att.url
-            input_size = att.size
-        else:
-            if not url.startswith(("http://", "https://")): url = "https://" + url
-            source_link = url
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=15) as res:
-                    if res.status != 200:
-                        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", color=discord.Color.red()))
-                        return
-                    code_data = await res.read()
-                    input_size = len(code_data)
-            with open(input_file, "wb") as f: f.write(code_data)
+        code, source_link, input_size = await get_code_and_source(ctx, url)
+        with open(input_file, "w", encoding="utf-8") as f:
+            f.write(code)
 
         node_bin = shutil.which("node") or shutil.which("nodejs") or "node"
         cmd = [node_bin, "v15_tool_attempt_source/v15_tool_attempt_source/deob.js", input_file, output_file]
@@ -350,7 +362,7 @@ async def cmd_luraph(ctx, url: str = None):
         ready_code = LuauOptimizer.beautify(result_code)
         final_text = f"-- Deobfuscado por Lexy Deobf\n\n{ready_code}"
 
-        path = "executable_script.lua"
+        path = f"executable_script_{ctx.author.id}.lua"
         with open(path, "w", encoding="utf-8") as f: f.write(final_text)
 
         output_size = os.path.getsize(path)
@@ -371,7 +383,9 @@ async def cmd_luraph(ctx, url: str = None):
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
-        await ctx.send(embed=embed, file=discord.File(path, filename="executable_script.lua"))
+        # Enviar embed primero y el archivo en un mensaje separado abajo
+        await ctx.send(embed=embed)
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
 
         for p in [path, input_file, output_file, json_path, expected_path]:
             if p and os.path.exists(p):
@@ -385,35 +399,16 @@ async def cmd_luraph(ctx, url: str = None):
 # ==================== COMANDO: .PROMETHEUS ====================
 @bot.command(name="prometheus")
 async def cmd_prometheus(ctx, url: str = None):
-    input_file = f"prom_input_{ctx.author.id}.lua"
-    output_file = f"prom_output_{ctx.author.id}.lua"
-
-    has_att = bool(ctx.message.attachments)
-    if not has_att and not url:
-        await ctx.send(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="Falta archivo adjunto o enlace de Prometheus.", color=discord.Color.red()))
-        return
-
     start_time = time.time()
     msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando Prometheus...", description="Procesando desofuscación...", color=discord.Color.from_rgb(0, 204, 102)))
 
+    input_file = f"prom_input_{ctx.author.id}.lua"
+    output_file = f"prom_output_{ctx.author.id}.lua"
+
     try:
-        source_link = "Archivo adjunto"
-        if has_att:
-            att = ctx.message.attachments[0]
-            await att.save(input_file)
-            source_link = att.url
-            input_size = att.size
-        else:
-            if not url.startswith(("http://", "https://")): url = "https://" + url
-            source_link = url
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=15) as res:
-                    if res.status != 200:
-                        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", color=discord.Color.red()))
-                        return
-                    code_data = await res.read()
-                    input_size = len(code_data)
-            with open(input_file, "wb") as f: f.write(code_data)
+        code, source_link, input_size = await get_code_and_source(ctx, url)
+        with open(input_file, "w", encoding="utf-8") as f:
+            f.write(code)
 
         node_bin = shutil.which("node") or shutil.which("nodejs") or "node"
         cmd = [node_bin, "Prometheus-Deobfuscator-main/bin/pdeobf.js", input_file, output_file]
@@ -435,7 +430,7 @@ async def cmd_prometheus(ctx, url: str = None):
         ready_code = LuauOptimizer.beautify(result_code)
         final_text = f"-- Deobfuscado por Lexy Deobf\n\n{ready_code}"
 
-        path = "executable_script.lua"
+        path = f"executable_script_{ctx.author.id}.lua"
         with open(path, "w", encoding="utf-8") as f: f.write(final_text)
 
         output_size = os.path.getsize(path)
@@ -456,7 +451,9 @@ async def cmd_prometheus(ctx, url: str = None):
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
-        await ctx.send(embed=embed, file=discord.File(path, filename="executable_script.lua"))
+        # Enviar embed primero y el archivo en un mensaje separado abajo
+        await ctx.send(embed=embed)
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
 
         for p in [path, input_file, output_file]:
             if p and os.path.exists(p):
