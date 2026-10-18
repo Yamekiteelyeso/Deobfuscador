@@ -33,11 +33,9 @@ async def on_ready():
     print(f"¡El bot está en línea y conectado como: {bot.user}!")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .help"))
 
-# ==================== DETECTOR DE VERSIONES LURAPH MEJORADO ====================
+# ==================== DETECTOR DE VERSIONES LURAPH ====================
 def quick_detect_luraph(code: str) -> str:
-    """Detecta de forma instantánea y precisa la versión de Luraph analizando firmas y patrones de VM."""
     code_lower = code.lower()
-    
     if "lph_" in code_lower or "luraph" in code_lower or "devirtualizing" in code_lower:
         if "v15.1" in code_lower or "path2d" in code or "15.1" in code:
             return "Luraph v15.1"
@@ -144,14 +142,13 @@ async def cmd_detect(ctx, url: str = None):
 
         version_detected = quick_detect_luraph(code)
 
-        embed = discord.Embed(
-            title=f"{EMOJI_CORRECT} LURAPH SIGNATURE DETECTED",
-            color=discord.Color.from_rgb(0, 204, 102)
+        embed_desc = (
+            f"## {EMOJI_CORRECT} LURAPH SIGNATURE DETECTED\n"
+            f"**Versión Identificada:**\n```ini\n[{version_detected}]\n```\n"
+            f"Source: {source_link}"
         )
-        embed.add_field(name="Versión Identificada", value=f"```ini\n[{version_detected}]\n```", inline=False)
-        embed.add_field(name="Source", value=source_link, inline=False)
-        embed.set_footer(text="Lexy Hub Protection & Tools • Signature Scanner")
 
+        embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
         await msg.edit(content=None, embed=embed)
     except Exception as e:
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description=str(e)[:200], color=discord.Color.red()))
@@ -233,14 +230,16 @@ async def cmd_beautify(ctx, url: str = None):
         if len(final_text.splitlines()) > 6:
             preview += "\n..."
 
-        embed = discord.Embed(
-            title=f"{EMOJI_CORRECT} LUA SCRIPT BEAUTIFIED",
-            color=discord.Color.from_rgb(0, 204, 102)
+        embed_desc = (
+            f"## {EMOJI_CORRECT} LUA SCRIPT BEAUTIFIED\n"
+            f"**Output Preview**\n"
+            f"```lua\n{preview}\n```\n"
+            f"Source: {source_link}\n"
+            f"-# input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s\n"
+            f"**Output File:**"
         )
-        embed.add_field(name="Output Preview", value=f"```lua\n{preview}\n```", inline=False)
-        embed.add_field(name="Source", value=source_link, inline=False)
-        embed.add_field(name="Output File", value="📎 `executable_script.lua` (Adjunto abajo)", inline=False)
-        embed.set_footer(text=f"input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s")
+
+        embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.edit(content=None, embed=embed)
         await ctx.send(file=discord.File(path, filename="executable_script.lua"))
@@ -329,14 +328,16 @@ async def cmd_luraph(ctx, url: str = None):
         if len(final_text.splitlines()) > 6:
             preview += "\n..."
 
-        embed = discord.Embed(
-            title=f"{EMOJI_CORRECT} LURAPH V15 DEOBFUSCATED",
-            color=discord.Color.from_rgb(0, 204, 102)
+        embed_desc = (
+            f"## {EMOJI_CORRECT} LURAPH V15 DEOBFUSCATED\n"
+            f"**Output Preview**\n"
+            f"```lua\n{preview}\n```\n"
+            f"Source: {source_link}\n"
+            f"-# input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s\n"
+            f"**Output File:**"
         )
-        embed.add_field(name="Output Preview", value=f"```lua\n{preview}\n```", inline=False)
-        embed.add_field(name="Source", value=source_link, inline=False)
-        embed.add_field(name="Output File", value="📎 `executable_script.lua` (Adjunto abajo)", inline=False)
-        embed.set_footer(text=f"input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s")
+
+        embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.edit(content=None, embed=embed)
         await ctx.send(file=discord.File(path, filename="executable_script.lua"))
