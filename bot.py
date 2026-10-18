@@ -76,7 +76,7 @@ class LuauOptimizer:
     @staticmethod
     def detect_version(code: str) -> str:
         code_lower = code.lower()
-        if "prometheus" in code_lower or "prm_" in code_lower:
+        if "prometheus" in code_lower or "prm_" in code_lower or "pdeobf" in code_lower:
             return "Prometheus Obfuscator"
         elif "lph_" in code_lower or "luraph" in code_lower or "devirtualizing" in code_lower:
             if "v15.1" in code_lower or "path2d" in code or "15.1" in code_lower:
@@ -394,7 +394,7 @@ async def cmd_prometheus(ctx, url: str = None):
         return
 
     start_time = time.time()
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando Prometheus...", description="Procesando desofuscación...", color=discord.Color.from_rgb(255, 140, 0)))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando Prometheus...", description="Procesando desofuscación...", color=discord.Color.from_rgb(0, 204, 102)))
 
     try:
         source_link = "Archivo adjunto"
@@ -453,7 +453,7 @@ async def cmd_prometheus(ctx, url: str = None):
             f"-# input: {LuauOptimizer.format_size(input_size)} · output: {LuauOptimizer.format_size(output_size)} · took: {elapsed:.1f}s\n\n"
             f"**Output File:**"
         )
-        embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(255, 140, 0))
+        embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
         await ctx.send(embed=embed, file=discord.File(path, filename="executable_script.lua"))
