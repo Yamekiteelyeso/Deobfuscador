@@ -1,7 +1,18 @@
 import os
+import zipfile
 import subprocess
 import discord
 from discord.ext import commands
+
+# 1. AUTODESCOMPRESIÓN AL ARRANCAR (Ideal para cuando subes el ZIP desde el celular)
+ZIP_FILE = "luraphv15_1_deobf.zip"
+TARGET_DIR = "v15_tool_attempt_source"
+
+if os.path.exists(ZIP_FILE) and not os.path.exists(TARGET_DIR):
+    print(f"📦 Descomprimiendo {ZIP_FILE} automáticamente...")
+    with zipfile.ZipFile(ZIP_FILE, 'r') as zip_ref:
+        zip_ref.extractall(TARGET_DIR)
+    print("✅ ¡Descompresión completada con éxito!")
 
 # Configuración de intenciones (Intents)
 intents = discord.Intents.default()
@@ -12,7 +23,6 @@ bot = commands.Bot(command_prefix=".", intents=intents)
 @bot.event
 async def on_ready():
     print(f"¡El bot está en línea y conectado como: {bot.user}!")
-    # Cambiar el estado del bot
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .luraph"))
 
 @bot.command(name="luraph", help="Desofusca scripts de Luraph adjuntando un archivo .lua o .txt")
@@ -59,7 +69,7 @@ async def deobfuscate_luraph(ctx):
         # 1. Guardar el archivo adjunto
         await attachment.save(input_filename)
 
-        # 2. Ejecutar la herramienta de desofuscación local (ajusta la ruta si cambia la carpeta del RAR)
+        # 2. Ejecutar la herramienta de desofuscación
         cmd = ["python", "v15_tool_attempt_source/build_luau.py", input_filename, output_filename]
         
         process = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
