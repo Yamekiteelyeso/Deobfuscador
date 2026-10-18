@@ -4,7 +4,9 @@ import subprocess
 import discord
 from discord.ext import commands
 
-# 1. AUTODESCOMPRESIÓN AL ARRANCAR (Ideal para cuando subes el ZIP desde el celular)
+# --- DIAGNÓSTICO AUTOMÁTICO AL ARRANCAR ---
+print("📂 Archivos en la raíz del proyecto:", os.listdir("."))
+
 ZIP_FILE = "luraphv15_1_deobf.zip"
 TARGET_DIR = "v15_tool_attempt_source"
 
@@ -13,6 +15,11 @@ if os.path.exists(ZIP_FILE) and not os.path.exists(TARGET_DIR):
     with zipfile.ZipFile(ZIP_FILE, 'r') as zip_ref:
         zip_ref.extractall(TARGET_DIR)
     print("✅ ¡Descompresión completada con éxito!")
+
+if os.path.exists(TARGET_DIR):
+    print(f"📂 Contenido de '{TARGET_DIR}':", os.listdir(TARGET_DIR))
+else:
+    print(f"⚠️ La carpeta '{TARGET_DIR}' NO existe todavía.")
 
 # Configuración de intenciones (Intents)
 intents = discord.Intents.default()
