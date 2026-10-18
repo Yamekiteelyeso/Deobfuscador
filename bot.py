@@ -76,13 +76,13 @@ async def deobfuscate_luraph(ctx):
         # 1. Guardar el archivo adjunto
         await attachment.save(input_filename)
 
-        # 2. Ejecutar la herramienta usando la ruta exacta que revelaron los logs
-        cmd = ["python", "v15_tool_attempt_source/v15_tool_attempt_source/build_luau.py", input_filename, output_filename]
+        # 2. Ejecutar la herramienta usando los argumentos correctos del script
+        cmd = ["python", "v15_tool_attempt_source/v15_tool_attempt_source/build_luau.py", "--src", input_filename]
         
         process = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
 
         if process.returncode != 0:
-            error_msg = process.stderr.strip() or "Error interno al procesar las estructuras del script."
+            error_msg = process.stderr.strip() or process.stdout.strip() or "Error interno al procesar las estructuras del script."
             embed_fail = discord.Embed(
                 title="⚠️ Fallo en la desofuscación",
                 description=f"No se ha podido procesar el script.\n\n**Detalle técnico:**\n```{error_msg[:1000]}```",
@@ -91,12 +91,11 @@ async def deobfuscate_luraph(ctx):
             await status_message.edit(embed=embed_fail)
             return
 
-        # 3. Leer el resultado generado
+        # 3. Capturar el resultado (si imprime en consola o genera archivo)
+        deobfuscated_code = process.stdout
         if os.path.exists(output_filename):
             with open(output_filename, "r", encoding="utf-8", errors="ignore") as f:
                 deobfuscated_code = f.read()
-        else:
-            deobfuscated_code = process.stdout
 
         # Agregar la firma personalizada en la parte superior
         final_content = f"-- Deobfuscado por Lexy Hub\n\n{deobfuscated_code}"
