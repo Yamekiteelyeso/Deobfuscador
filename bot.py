@@ -141,9 +141,9 @@ async def cmd_help(ctx):
         color=discord.Color.from_rgb(25, 25, 35)
     )
     embed.add_field(name="🔍 `.detect <URL / Adjunto>`", value="Identifica si el script usa Luraph o Prometheus.", inline=False)
-    embed.add_field(name="🔓 `.luraph <URL / Adjunto>`", value="Desofusca scripts de Luraph v15/v15.1 y los repara.", inline=False)
+    embed.add_field(name="🔓 `.luraph <URL / Adjunto>`", value="Desofusca scripts de Luraph v15/v15.1.", inline=False)
     embed.add_field(name="🔥 `.prometheus <URL / Adjunto>`", value="Desofusca scripts protegidos con Prometheus.", inline=False)
-    embed.add_field(name="✨ `.beautify <URL / Adjunto>`", value="Limpia errores, re-indenta y repara código Luau roto.", inline=False)
+    embed.add_field(name="✨ `.beautify <URL / Adjunto>`", value="Limpia errores y re-indenta código Luau.", inline=False)
     embed.add_field(name="📥 `.get <URL>`", value="Recupera código fuente en texto plano desde enlaces externos.", inline=False)
     embed.set_footer(text="Lexy Hub Security • Enterprise Grade")
     await ctx.send(embed=embed)
@@ -223,7 +223,7 @@ async def cmd_beautify(ctx, url: str = None):
         return
 
     start_time = time.time()
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Optimizando y Reparando...", description="Reparando funciones y formateando código...", color=discord.Color.blue()))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Optimizando...", description="Formateando código...", color=discord.Color.blue()))
 
     try:
         source_link, code = "Archivo adjunto", ""
@@ -253,22 +253,22 @@ async def cmd_beautify(ctx, url: str = None):
         output_size = os.path.getsize(path)
         elapsed = time.time() - start_time
 
-        # Preview ampliado a 8 líneas para que se aprecie mejor
         preview_lines = final_text.splitlines()[:8]
         preview = "\n".join(preview_lines)
         if len(final_text.splitlines()) > 8: preview += "\n--"
 
         embed_desc = (
-            f"## {EMOJI_CORRECT} LUA SCRIPT BEAUTIFIED & FIXED\n"
+            f"## {EMOJI_CORRECT} LUA SCRIPT BEAUTIFIED\n"
             f"**Output Preview**\n"
             f"```lua\n{preview}\n```\n"
             f"Source: {source_link}\n"
             f"-# input: {LuauOptimizer.format_size(input_size)} · output: {LuauOptimizer.format_size(output_size)} · took: {elapsed:.1f}s\n\n"
-            f"**Output File:**\n`executable_script.lua`"
+            f"**Output File:**"
         )
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
+        # El archivo va junto en el ctx.send, lo que en Discord lo coloca visualmente abajo del embed
         await ctx.send(embed=embed, file=discord.File(path, filename="executable_script.lua"))
         if os.path.exists(path): os.remove(path)
     except Exception as e:
@@ -344,18 +344,17 @@ async def cmd_luraph(ctx, url: str = None):
         output_size = os.path.getsize(path)
         elapsed = time.time() - start_time
 
-        # Preview ampliado a 8 líneas
         preview_lines = final_text.splitlines()[:8]
         preview = "\n".join(preview_lines)
         if len(final_text.splitlines()) > 8: preview += "\n--"
 
         embed_desc = (
-            f"## {EMOJI_CORRECT} LURAPH V15 DEOBFUSCATED & FIXED\n"
+            f"## {EMOJI_CORRECT} LURAPH V15 DEOBFUSCATED\n"
             f"**Output Preview**\n"
             f"```lua\n{preview}\n```\n"
             f"Source: {source_link}\n"
             f"-# input: {LuauOptimizer.format_size(input_size)} · output: {LuauOptimizer.format_size(output_size)} · took: {elapsed:.1f}s\n\n"
-            f"**Output File:**\n`executable_script.lua`"
+            f"**Output File:**"
         )
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
@@ -404,7 +403,6 @@ async def cmd_prometheus(ctx, url: str = None):
                     input_size = len(code_data)
             with open(input_file, "wb") as f: f.write(code_data)
 
-        # Configura aquí la ruta de la herramienta de Prometheus cuando me pases el zip
         node_bin = shutil.which("node") or shutil.which("nodejs") or "node"
         cmd = [node_bin, "prometheus_tool/deob.js", input_file, output_file]
 
@@ -430,18 +428,17 @@ async def cmd_prometheus(ctx, url: str = None):
         output_size = os.path.getsize(path)
         elapsed = time.time() - start_time
 
-        # Preview ampliado a 8 líneas
         preview_lines = final_text.splitlines()[:8]
         preview = "\n".join(preview_lines)
         if len(final_text.splitlines()) > 8: preview += "\n--"
 
         embed_desc = (
-            f"## {EMOJI_CORRECT} PROMETHEUS DEOBFUSCATED & FIXED\n"
+            f"## {EMOJI_CORRECT} PROMETHEUS DEOBFUSCATED\n"
             f"**Output Preview**\n"
             f"```lua\n{preview}\n```\n"
             f"Source: {source_link}\n"
             f"-# input: {LuauOptimizer.format_size(input_size)} · output: {LuauOptimizer.format_size(output_size)} · took: {elapsed:.1f}s\n\n"
-            f"**Output File:**\n`executable_script.lua`"
+            f"**Output File:**"
         )
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(255, 140, 0))
 
