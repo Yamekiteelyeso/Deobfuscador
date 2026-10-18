@@ -32,6 +32,38 @@ async def on_ready():
     print(f"¡El bot está en línea y conectado como: {bot.user}!")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .help"))
 
+# ==================== FUNCIÓN AUXILIAR: FORMATEAR LUA (BEAUTIFY) ====================
+def beautify_lua_code(code: str) -> str:
+    """Función para ordenar la indentación de código Lua de forma básica y limpia."""
+    lines = code.splitlines()
+    formatted_lines = []
+    indent_level = 0
+    indent_str = "    " # 4 espacios
+
+    # Palabras clave que aumentan o disminuyen la indentación
+    increase_keywords = {"do", "then", "repeat", "function"}
+    block_starters = {"if", "for", "while", "local function"}
+
+    for line in lines:
+        stripped = line.strip()
+        
+        # Reducir indentación en cierres o palabras de salida
+        if stripped.startswith(("end", "until", "else", "elseif")) or stripped == "}":
+            indent_level = max(0, indent_level - 1)
+
+        formatted_lines.append((indent_str * indent_level) + stripped)
+
+        # Aumentar indentación si la línea abre un bloque
+        lower_line = stripped.lower()
+        if any(lower_line.startswith(kw) for kw in block_starters) and (any(kw in lower_line for kw in increase_keywords) or lower_line.endswith("do") or lower_line.endswith("then")):
+            indent_level += 1
+        elif stripped in {"do", "repeat"} or stripped.endswith("{"):
+            indent_level += 1
+        elif lower_line.startswith("else") or lower_line.startswith("elseif"):
+            indent_level += 1
+
+    return "\n".join(formatted_lines)
+
 # ==================== COMANDO: .HELP ====================
 @bot.command(name="help")
 async def custom_help(ctx):
@@ -39,7 +71,7 @@ async def custom_help(ctx):
         title="✨ Centro de Herramientas - Lexy Hub",
         description=(
             "Bienvenido al panel oficial de comandos. Aquí puedes desofuscar scripts "
-            "de Luraph v15 o descargar el código de enlaces externos de forma rápida y segura."
+            "de Luraph v15, embellecer código o descargar recursos de forma segura."
         ),
         color=discord.Color.from_rgb(138, 43, 226)
     )
@@ -48,9 +80,18 @@ async def custom_help(ctx):
         name="🔓 `.luraph <URL opcional>`",
         value=(
             "Desofusca un script protegido con Luraph v15.\n"
-            "• **Método 1:** Adjunta un archivo `.lua` o `.txt` al enviar el comando.\n"
-            "• **Método 2:** Proporciona un enlace directo (ej. Pastefy, Pastebin, Raw).\n"
+            "• Adjunta un archivo `.lua`/`.txt` o usa una URL (Pastefy, Raw).\n"
             "**Ejemplo:** `.luraph https://pastefy.app/jwjdsj/raw`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="✨ `.beautify <URL opcional>`",
+        value=(
+            "Ordena, formatea y limpia la indentación de un script Lua/Luau.\n"
+            "• Adjunta un archivo o proporciona una URL directa.\n"
+            "**Ejemplo:** `.beautify https://pastefy.app/jwjdsj/raw`"
         ),
         inline=False
     )
@@ -153,6 +194,86 @@ async def cmd_get(ctx, url: str = None):
         )
         await status_msg.edit(embed=embed_err)
 
+# ==================== COMANDO: .BEAUTIFY (Archivos o Enlaces) ====================
+@bot.command(name="beautify")
+async def beautify_script(ctx, url: str = None):
+    has_attachment = bool(ctx.message.attachments)
+    
+    if not has_attachment and not url:
+        embed_err = discord.Embed(
+            title=f"{EMOJI_INCORRECT} Error",
+            description="Por favor adjunta un archivo `.lua`/`.txt` o proporciona una URL válida para embellecer.",
+            color=discord.Color.from_rgb(235, 59, 90)
+        )
+        await ctx.send(embed=embed_err)
+        return
+
+    embed_loading = discord.Embed(
+        title=f"{EMOJI_LOADING} Embelleciendo código",
+        description="Ordenando la indentación y dando formato al script...",
+        color=discord.Color.from_rgb(52, 152, 219)
+    )
+    status_message = await ctx.send(embed=embed_loading)
+
+    try:
+        source_identifier = "Archivo adjunto"
+        raw_code = ""
+
+        if has_attachment:
+            attachment = ctx.message.attachments[0]
+            if not attachment.filename.lower().endswith((".txt", ".lua")):
+                await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="El archivo debe ser formato `.txt` or `.lua`.", color=discord.Color.from_rgb(235, 59, 90)))
+                return
+            source_identifier = attachment.filename
+            raw_code = (await attachment.read()).decode("utf-8", errors="ignore")
+        elif url:
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            source_identifier = url
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=15) as response:
+                    if response.status != 200:
+                        await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="No se pudo descargar el contenido de la URL.", color=discord.Color.from_rgb(235, 59, 90)))
+                        return
+                    raw_code = await response.text()
+
+        if not raw_code.strip():
+            await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="El contenido está vacío.", color=discord.Color.from_rgb(235, 59, 90)))
+            return
+
+        # Aplicar formato beautify
+        beautified_code = beautify_lua_code(raw_code)
+        final_content = f"-- Formateado por Lexy Hub\n\n{beautified_code}"
+
+        final_filename = "beautified_lexyhub.lua"
+        with open(final_filename, "w", encoding="utf-8") as f:
+            f.write(final_content)
+
+        preview_code = final_content[:400].strip()
+        if len(final_content) > 400:
+            preview_code += "\n..."
+
+        embed_success = discord.Embed(
+            title=f"{EMOJI_CORRECT} SUCCESSFULLY BEAUTIFIED",
+            description=f"🔗 **Fuente:** `{source_identifier}`\n\n**Fetched:**\n```lua\n{preview_code}\n```",
+            color=discord.Color.from_rgb(32, 191, 107)
+        )
+        embed_success.set_footer(text="Lexy Hub Protection & Tools")
+
+        await status_message.edit(embed=embed_success)
+        await ctx.send(file=discord.File(final_filename, filename="beautified_lexyhub.lua"))
+
+        if os.path.exists(final_filename):
+            os.remove(final_filename)
+
+    except Exception as e:
+        embed_err = discord.Embed(
+            title=f"{EMOJI_INCORRECT} Error",
+            description=f"Ocurrió un error inesperado al procesar el código: ```{str(e)[:200]}```",
+            color=discord.Color.from_rgb(235, 59, 90)
+        )
+        await status_message.edit(embed=embed_err)
+
 # ==================== COMANDO: .LURAPH (Archivos o Enlaces) ====================
 @bot.command(name="luraph")
 async def deobfuscate_luraph(ctx, url: str = None):
@@ -179,7 +300,7 @@ async def deobfuscate_luraph(ctx, url: str = None):
     status_message = await ctx.send(embed=embed_loading)
 
     try:
-        # CASO A: Archivo adjunto
+        source_identifier = "Archivo adjunto"
         if has_attachment:
             attachment = ctx.message.attachments[0]
             if not attachment.filename.lower().endswith((".txt", ".lua")):
@@ -199,12 +320,13 @@ async def deobfuscate_luraph(ctx, url: str = None):
                 await status_message.edit(embed=embed_err)
                 return
             await attachment.save(input_filename)
+            source_identifier = attachment.filename
 
-        # CASO B: URL proporcionada
         elif url:
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
             
+            source_identifier = url
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=15) as response:
                     if response.status != 200:
@@ -229,7 +351,6 @@ async def deobfuscate_luraph(ctx, url: str = None):
             with open(input_filename, "w", encoding="utf-8") as f:
                 f.write(script_content)
 
-        # 2. Ejecutar la herramienta Node.js
         node_bin = shutil.which("node") or shutil.which("nodejs") or "node"
         cmd = [node_bin, "v15_tool_attempt_source/v15_tool_attempt_source/deob.js", input_filename, output_filename]
         
@@ -250,7 +371,6 @@ async def deobfuscate_luraph(ctx, url: str = None):
         except Exception:
             pass
 
-        # Buscar el archivo en orden de prioridad
         if output_file_from_json and os.path.exists(output_file_from_json):
             with open(output_file_from_json, "r", encoding="utf-8", errors="ignore") as f:
                 deobfuscated_code = f.read()
@@ -261,7 +381,6 @@ async def deobfuscate_luraph(ctx, url: str = None):
             with open(output_filename, "r", encoding="utf-8", errors="ignore") as f:
                 deobfuscated_code = f.read()
 
-        # Si falló la desofuscación
         if not deobfuscated_code.strip():
             error_details = process.stderr.strip() or raw_stdout or "Error desconocido al procesar el JSON de salida."
             
@@ -278,31 +397,26 @@ async def deobfuscate_luraph(ctx, url: str = None):
                 pass
             return
 
-        # 3. Éxito: Preparar contenido final
         final_content = f"-- Deobfuscado por Lexy Hub\n\n{deobfuscated_code}"
         
-        # Guardar en archivo para adjuntarlo SIEMPRE
         final_filename = "deobfuscated_lexyhub.lua"
         with open(final_filename, "w", encoding="utf-8") as f:
             f.write(final_content)
 
-        # Vista previa pequeña para el Embed (400 caracteres)
         preview_code = final_content[:400].strip()
         if len(final_content) > 400:
             preview_code += "\n..."
 
         embed_success = discord.Embed(
             title=f"{EMOJI_CORRECT} SUCCESSFULLY FETCHED",
-            description=f"**Fetched:**\n```lua\n{preview_code}\n```",
+            description=f"🔗 **Fuente:** `{source_identifier}`\n\n**Fetched:**\n```lua\n{preview_code}\n```",
             color=discord.Color.from_rgb(32, 191, 107)
         )
         embed_success.set_footer(text="Lexy Hub Protection & Tools")
 
-        # Editar mensaje con éxito y enviar el archivo adjunto
         await status_message.edit(embed=embed_success)
         await ctx.send(file=discord.File(final_filename, filename="deobfuscated_lexyhub.lua"))
 
-        # Limpieza de archivos temporales y carpetas de salida
         if os.path.exists(final_filename):
             os.remove(final_filename)
 
@@ -326,7 +440,7 @@ async def deobfuscate_luraph(ctx, url: str = None):
         )
         await status_message.edit(embed=embed_err)
         try:
-            await ctx.author.send("⚠️ **Detalle del fallo:** El proceso tardó demasiado tiempo (Timeout de 60 segundos) y fue cancelado.")
+            await ctx.author.send("⚠️ **Detalle del fallo:** El proceso tardó demasiado tiempo y fue cancelado.")
         except discord.Forbidden:
             pass
         
