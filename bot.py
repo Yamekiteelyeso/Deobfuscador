@@ -25,17 +25,30 @@ EMOJI_LOADING = "⏳"
 EMOJI_CORRECT = "<:correct:1561435171385909288>"
 EMOJI_INCORRECT = "<:incorrect:1561436020766146590>"
 
-ZIP_FILE = "luraphv15_1_deobf.zip"
-TARGET_DIR = "v15_tool_attempt_source"
+# --- DESCOMPRESIÓN AUTOMÁTICA DE HERRAMIENTAS ---
+LURAPH_ZIP = "luraphv15_1_deobf.zip"
+LURAPH_DIR = "v15_tool_attempt_source"
 
-if os.path.exists(ZIP_FILE) and not os.path.exists(TARGET_DIR):
-    logger.info(f"Descomprimiendo {ZIP_FILE}...")
+PROM_ZIP = "Prometheus-Deobfuscator-main.zip"
+PROM_DIR = "Prometheus-Deobfuscator-main"
+
+if os.path.exists(LURAPH_ZIP) and not os.path.exists(LURAPH_DIR):
+    logger.info(f"Descomprimiendo {LURAPH_ZIP}...")
     try:
-        with zipfile.ZipFile(ZIP_FILE, 'r') as zip_ref:
-            zip_ref.extractall(TARGET_DIR)
-        logger.info("Descompresión completada con éxito.")
+        with zipfile.ZipFile(LURAPH_ZIP, 'r') as zip_ref:
+            zip_ref.extractall(LURAPH_DIR)
+        logger.info("Luraph descomprimido con éxito.")
     except Exception as e:
-        logger.error(f"Error al descomprimir {ZIP_FILE}: {e}")
+        logger.error(f"Error al descomprimir {LURAPH_ZIP}: {e}")
+
+if os.path.exists(PROM_ZIP) and not os.path.exists(PROM_DIR):
+    logger.info(f"Descomprimiendo {PROM_ZIP}...")
+    try:
+        with zipfile.ZipFile(PROM_ZIP, 'r') as zip_ref:
+            zip_ref.extractall(".")
+        logger.info("Prometheus descomprimido con éxito.")
+    except Exception as e:
+        logger.error(f"Error al descomprimir {PROM_ZIP}: {e}")
 
 intents = discord.Intents.default()
 intents.message_content = True
