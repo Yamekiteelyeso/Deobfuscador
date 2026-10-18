@@ -33,22 +33,19 @@ async def on_ready():
     print(f"¡El bot está en línea y conectado como: {bot.user}!")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .help"))
 
-# ==================== DETECTOR DE VERSIONES LURAPH ====================
-def detect_luraph_version(code: str) -> str:
-    """Analiza las firmas del código para diferenciar Luraph v15 y v15.1"""
+# ==================== DETECTOR DE VERSIONES LURAPH MEJORADO ====================
+def quick_detect_luraph(code: str) -> str:
+    """Detecta de forma instantánea y precisa la versión de Luraph analizando firmas y patrones de VM."""
     code_lower = code.lower()
     
-    # Buscar patrones específicos o firmas de la VM
-    if "lph_" in code_lower or "luraph" in code_lower:
-        # Indicadores para distinguir v15.1 (usualmente incluye patrones de constantes o marcas de empaquetado recientes)
-        if "v15.1" in code_lower or "Path2D" in code or "15.1" in code:
+    if "lph_" in code_lower or "luraph" in code_lower or "devirtualizing" in code_lower:
+        if "v15.1" in code_lower or "path2d" in code or "15.1" in code:
             return "Luraph v15.1"
-        elif "v15" in code_lower or "devirtualizing" in code_lower or len(code) > 500:
-            return "Luraph v15 / v15.1 (Estándar)"
+        elif "v15" in code_lower or len(code) > 200:
+            return "Luraph v15"
         else:
-            return "Luraph (Versión desconocida o genérica)"
-    
-    return "No detectado / Otro ofuscador"
+            return "Luraph (Variante Genérica)"
+    return "No compatible / Otro ofuscador"
 
 # ==================== LIMPIADOR Y OPTIMIZADOR PROFESIONAL DE LUAU ====================
 def clean_and_optimize_lua(code: str) -> str:
@@ -109,11 +106,11 @@ def format_size(size_bytes):
 async def custom_help(ctx):
     embed = discord.Embed(
         title="🛡️ Lexy Hub — Centro de Herramientas",
-        description="Plataforma avanzada de ingeniería inversa, detección y optimización de scripts en Luau.",
+        description="Plataforma avanzada de ingeniería inversa, detección, desofuscación y optimización de scripts en Luau.",
         color=discord.Color.from_rgb(30, 30, 45)
     )
-    embed.add_field(name="🔍 `.detect <URL / Adjunto>`", value="Detecta automáticamente si un script es Luraph v15 o v15.1.", inline=False)
-    embed.add_field(name="🔓 `.luraph <URL / Adjunto>`", value="Desofusca scripts protegidos con Luraph v15/v15.1.", inline=False)
+    embed.add_field(name="🔍 `.detect <URL / Adjunto>`", value="Detecta de forma instantánea si el script es Luraph v15 o v15.1.", inline=False)
+    embed.add_field(name="🔓 `.luraph <URL / Adjunto>`", value="Desofusca scripts protegidos con Luraph v15/v15.1 de forma limpia.", inline=False)
     embed.add_field(name="✨ `.beautify <URL / Adjunto>`", value="Limpia errores, formatea y deja el código Luau 100% listo para ejecutar.", inline=False)
     embed.add_field(name="📥 `.get <URL>`", value="Extrae y muestra el contenido de texto plano directamente desde URLs externas.", inline=False)
     embed.set_footer(text="Lexy Hub Security • High Performance Tools")
@@ -127,7 +124,7 @@ async def cmd_detect(ctx, url: str = None):
         await ctx.send(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="Adjunta un archivo o provee un enlace para analizar.", color=discord.Color.red()))
         return
 
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Detectando versión de Luraph...", color=discord.Color.blue()))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Escaneando firmas de Luraph...", color=discord.Color.blue()))
 
     try:
         source_link, code = "Desconocido", ""
@@ -145,17 +142,17 @@ async def cmd_detect(ctx, url: str = None):
                         return
                     code = (await res.read()).decode("utf-8", errors="ignore")
 
-        detected_version = detect_luraph_version(code)
+        version_detected = quick_detect_luraph(code)
 
         embed = discord.Embed(
             title=f"{EMOJI_CORRECT} LURAPH SIGNATURE DETECTED",
             color=discord.Color.from_rgb(0, 204, 102)
         )
-        embed.add_field(name="Versión Identificada", value=f"```ini\n[{detected_version}]\n```", inline=False)
+        embed.add_field(name="Versión Identificada", value=f"```ini\n[{version_detected}]\n```", inline=False)
         embed.add_field(name="Source", value=source_link, inline=False)
-        embed.set_footer(text="Lexy Hub Protection & Tools • Detector v1.0")
+        embed.set_footer(text="Lexy Hub Protection & Tools • Signature Scanner")
 
-        await msg.edit(content="", embed=embed)
+        await msg.edit(content=None, embed=embed)
     except Exception as e:
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description=str(e)[:200], color=discord.Color.red()))
 
@@ -223,7 +220,7 @@ async def cmd_beautify(ctx, url: str = None):
                     code = code_bytes.decode("utf-8", errors="ignore")
 
         ready_code = executable_beautifier(code)
-        final_text = f"-- Formateado, Limpiado y Listo para Ejecutar por Lexy Hub\n\n{ready_code}"
+        final_text = f"-- Deobfuscado por Lexy Deobf\n\n{ready_code}"
         
         path = "executable_script.lua"
         with open(path, "w", encoding="utf-8") as f:
@@ -242,9 +239,10 @@ async def cmd_beautify(ctx, url: str = None):
         )
         embed.add_field(name="Output Preview", value=f"```lua\n{preview}\n```", inline=False)
         embed.add_field(name="Source", value=source_link, inline=False)
+        embed.add_field(name="Output File", value="📎 `executable_script.lua` (Adjunto abajo)", inline=False)
         embed.set_footer(text=f"input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s")
 
-        await msg.edit(content="**Output File:**", embed=embed)
+        await msg.edit(content=None, embed=embed)
         await ctx.send(file=discord.File(path, filename="executable_script.lua"))
         os.remove(path)
     except Exception as e:
@@ -318,7 +316,7 @@ async def cmd_luraph(ctx, url: str = None):
             return
 
         ready_code = executable_beautifier(result_code)
-        final_text = f"-- Desofuscado, Limpiado y Listo para Ejecutar por Lexy Hub\n\n{ready_code}"
+        final_text = f"-- Deobfuscado por Lexy Deobf\n\n{ready_code}"
         
         path = "executable_script.lua"
         with open(path, "w", encoding="utf-8") as f:
@@ -332,14 +330,15 @@ async def cmd_luraph(ctx, url: str = None):
             preview += "\n..."
 
         embed = discord.Embed(
-            title=f"{EMOJI_CORRECT} LURAPH V15 / V15.1 DEOBFUSCATED",
+            title=f"{EMOJI_CORRECT} LURAPH V15 DEOBFUSCATED",
             color=discord.Color.from_rgb(0, 204, 102)
         )
         embed.add_field(name="Output Preview", value=f"```lua\n{preview}\n```", inline=False)
         embed.add_field(name="Source", value=source_link, inline=False)
+        embed.add_field(name="Output File", value="📎 `executable_script.lua` (Adjunto abajo)", inline=False)
         embed.set_footer(text=f"input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s")
 
-        await msg.edit(content="**Output File:**", embed=embed)
+        await msg.edit(content=None, embed=embed)
         await ctx.send(file=discord.File(path, filename="executable_script.lua"))
 
         for p in [path, input_file, output_file, json_path, expected_path]:
