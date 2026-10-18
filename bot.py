@@ -143,6 +143,11 @@ async def on_command_error(ctx, error):
 
 # ==================== UTILIDAD PARA OBTENER ARCHIVO O URL ====================
 async def get_code_and_source(ctx, url: str = None):
+    # .deobf ya descargó el archivo: lo reutiliza el comando al que delega.
+    cached = getattr(ctx, "_lexy_cache", None)
+    if cached:
+        return cached
+
     code = ""
     source_link = "Desconocido"
     input_size = 0
@@ -152,7 +157,7 @@ async def get_code_and_source(ctx, url: str = None):
         att = ctx.message.attachments[0]
         source_link = att.url
         input_size = att.size
-        code = (await att.read()).decode("utf-8", errors="ignore")
+        code = (await att.read()).decode("utf-8-sig", errors="ignore")
         return code, source_link, input_size
 
     # 2. Verificar si está respondiendo a un mensaje que tiene archivo adjunto
@@ -163,7 +168,7 @@ async def get_code_and_source(ctx, url: str = None):
                 att = ref_msg.attachments[0]
                 source_link = att.url
                 input_size = att.size
-                code = (await att.read()).decode("utf-8", errors="ignore")
+                code = (await att.read()).decode("utf-8-sig", errors="ignore")
                 return code, source_link, input_size
         except Exception:
             pass
@@ -179,7 +184,7 @@ async def get_code_and_source(ctx, url: str = None):
                     raise Exception(f"Error HTTP al acceder a la URL: {res.status}")
                 data = await res.read()
                 input_size = len(data)
-                code = data.decode("utf-8", errors="ignore")
+                code = data.decode("utf-8-sig", errors="ignore")
         return code, source_link, input_size
 
     raise Exception("No se encontró ningún archivo adjunto, mensaje respondido con archivo ni URL válida.")
@@ -279,69 +284,51 @@ class LuauOptimizer:
             return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 # ==================== COMANDO: .HELP ====================
+# Discord muestra el color 0x000000 como "sin color"; 0x010101 pinta la franja realmente negra.
+EMBED_BLACK = discord.Color.from_rgb(1, 1, 1)
+
 @bot.command(name="help")
 async def cmd_help(ctx):
     embed = discord.Embed(
-        title="🛡️ Lexy Hub — Panel de Ingeniería Inversa",
-        description="Suite avanzada para desofuscar, detectar y optimizar scripts de Luau (Luraph v15 / v15.1, Prometheus, MoonSec V3 & Goofyscator).",
-        color=discord.Color.from_rgb(25, 25, 35)
+        title="Lexy Hub • Deobf",
+        description="Usa el comando con un **archivo adjunto**, una **URL** o **respondiendo** a un mensaje con archivo.",
+        color=EMBED_BLACK
     )
-    embed.add_field(name="🔍 `.detect <URL / Adjunto / Responder>`", value="Identifica el ofuscador del script.", inline=False)
-    embed.add_field(name="🔓 `.luraph <URL / Adjunto / Responder>`", value="Desofusca Luraph: detecta solo si es v15 o v15.1. (Forzar: `.luraph15` / `.luraph151`)", inline=False)
-    embed.add_field(name="🔥 `.prometheus <URL / Adjunto / Responder>`", value="Desofusca scripts protegidos con Prometheus.", inline=False)
-    embed.add_field(name="🤖 `.deobf <URL / Adjunto / Responder>`", value="Universal: detecta el ofuscador y lo desofusca automáticamente.", inline=False)
-    embed.add_field(name="🌙 `.moonveil <URL / Adjunto / Responder>`", value="Desofusca scripts protegidos con MoonSec V3.", inline=False)
-    embed.add_field(name="🐸 `.goofy <URL / Adjunto / Responder>`", value="Desofusca scripts protegidos con Goofyscator V11 BETA-1.", inline=False)
-    embed.add_field(name="📋 `.list`", value="Muestra la lista de desofuscadores y herramientas integradas.", inline=False)
-    embed.add_field(name="✨ `.beautify <URL / Adjunto / Responder>`", value="Limpia errores y re-indenta código Luau.", inline=False)
-    embed.add_field(name="📥 `.get <URL>`", value="Recupera código fuente en texto plano desde enlaces externos.", inline=False)
-    embed.set_footer(text="Lexy Hub Security • Enterprise Grade")
+    embed.add_field(
+        name="⚡ Universal",
+        value="`.deobf` — detecta el ofuscador y lo desofusca solo",
+        inline=False
+    )
+    embed.add_field(
+        name="🔓 Desofuscadores",
+        value=(
+            "`.luraph` — Luraph v15 / v15.1 (detecta la versión)\n"
+            "`.prometheus` — Prometheus\n"
+            "`.moonveil` — MoonSec V3\n"
+            "`.goofy` — Goofyscator V11"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🛠️ Herramientas",
+        value=(
+            "`.detect` — identifica el ofuscador\n"
+            "`.beautify` — limpia e indenta el código\n"
+            "`.get <URL>` — descarga el código en texto plano\n"
+            "`.list` — desofuscadores disponibles"
+        ),
+        inline=False
+    )
+    embed.set_footer(text="Lexy Hub Security")
     await ctx.send(embed=embed)
 
 # ==================== COMANDO: .LIST ====================
 @bot.command(name="list")
 async def cmd_list(ctx):
     embed = discord.Embed(
-        title="📂 Lexy Hub — Desofuscadores Disponibles",
-        description="Lista actual de motores de ingeniería inversa integrados en el sistema:",
-        color=discord.Color.from_rgb(0, 204, 102)
+        description="Deobfs Availables:\nLuraph v15/v15.1\nPrometheus\nMoonSec V3\nGoofyscator",
+        color=EMBED_BLACK
     )
-    embed.add_field(
-        name="1️⃣ Luraph v15 Deobfuscator",
-        value="• **Versiones:** v15\n• **Comando:** `.luraph` (detecta la versión solo; forzar: `.luraph15`)\n• **Estado:** `Activo`",
-        inline=False
-    )
-    embed.add_field(
-        name="2️⃣ Luraph v15.1 Deobfuscator",
-        value="• **Versiones:** v15.1\n• **Comando:** `.luraph` (detecta la versión solo; forzar: `.luraph151`)\n• **Estado:** `Activo`",
-        inline=False
-    )
-    embed.add_field(
-        name="3️⃣ Prometheus Deobfuscator",
-        value="• **Versiones:** CLI Estándar\n• **Comando:** `.prometheus` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
-        inline=False
-    )
-    embed.add_field(
-        name="4️⃣ MoonSec V3 Deobfuscator",
-        value="• **Versiones:** MoonSec V3 (V2 no soportado)\n• **Comando:** `.moonveil` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
-        inline=False
-    )
-    embed.add_field(
-        name="5️⃣ Goofyscator Deobfuscator",
-        value="• **Versiones:** V11 BETA-1\n• **Comando:** `.goofy` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
-        inline=False
-    )
-    embed.add_field(
-        name="6️⃣ Luau Beautifier & Fixer",
-        value="• **Función:** Limpieza y optimización\n• **Comando:** `.beautify` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
-        inline=False
-    )
-    embed.add_field(
-        name="🤖 Desofuscador Universal",
-        value="• **Función:** Detecta el ofuscador y usa el motor correcto\n• **Comando:** `.deobf` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
-        inline=False
-    )
-    embed.set_footer(text="Lexy Hub Security • Herramientas de Alto Rendimiento")
     await ctx.send(embed=embed)
 
 # ==================== COMANDO: .DETECT ====================
@@ -901,23 +888,27 @@ async def cmd_goofy(ctx, url: str = None):
 async def cmd_deobf(ctx, url: str = None):
     msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Detectando ofuscador...", color=discord.Color.blue()))
     try:
-        code, source_link, _ = await get_code_and_source(ctx, url)
+        code, source_link, input_size = await get_code_and_source(ctx, url)
+
+        label, command_name = LuauOptimizer.identify(code)
+        logger.info(f".deobf: detectado '{label}' -> {command_name}")
+        target = bot.get_command(command_name) if command_name else None
+        if target is None:
+            await msg.edit(embed=discord.Embed(
+                title=f"{EMOJI_INCORRECT} No compatible",
+                description=f"Detectado: `{label}`\nNo hay un desofuscador disponible para este script.\nSi sabes cuál es, usa su comando directo (`.help`).",
+                color=discord.Color.red()
+            ))
+            return
+
+        await msg.edit(embed=discord.Embed(description=f"{EMOJI_CORRECT} Detectado: **{label}** → `.{command_name}`", color=discord.Color.from_rgb(0, 204, 102)))
+
+        # Se pasa lo ya descargado para no leer el adjunto / URL dos veces.
+        ctx._lexy_cache = (code, source_link, input_size)
+        await ctx.invoke(target, url=url)
     except Exception as e:
-        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description=str(e)[:200], color=discord.Color.red()))
-        return
-
-    label, command_name = LuauOptimizer.identify(code)
-    if not command_name:
-        await msg.edit(embed=discord.Embed(
-            title=f"{EMOJI_INCORRECT} No compatible",
-            description=f"Detectado: `{label}`\nNo hay un desofuscador disponible para este script.",
-            color=discord.Color.red()
-        ))
-        return
-
-    await msg.edit(embed=discord.Embed(description=f"{EMOJI_CORRECT} Detectado: **{label}** → `.{command_name}`", color=discord.Color.from_rgb(0, 204, 102)))
-    # Reutiliza el comando correspondiente (relee adjunto/URL, igual que si se llamara directo).
-    await ctx.invoke(bot.get_command(command_name), url=url)
+        logger.error(f"Error en .deobf: {e}", exc_info=True)
+        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description=f"```{str(e)[:400]}```", color=discord.Color.red()))
 
 # ==================== INICIO DEL BOT ====================
 TOKEN = os.getenv("DISCORD_TOKEN")
