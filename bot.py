@@ -76,8 +76,8 @@ async def deobfuscate_luraph(ctx):
         # 1. Guardar el archivo adjunto
         await attachment.save(input_filename)
 
-        # 2. Ejecutar la herramienta de desofuscación
-        cmd = ["python", "v15_tool_attempt_source/build_luau.py", input_filename, output_filename]
+        # 2. Ejecutar la herramienta usando la ruta exacta que revelaron los logs
+        cmd = ["python", "v15_tool_attempt_source/v15_tool_attempt_source/build_luau.py", input_filename, output_filename]
         
         process = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
 
