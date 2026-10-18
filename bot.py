@@ -2,6 +2,7 @@ import os
 import zipfile
 import subprocess
 import shutil
+import json
 import aiohttp
 import discord
 from discord.ext import commands
@@ -190,19 +191,31 @@ async def deobfuscate_luraph(ctx, url: str = None):
         node_bin = shutil.which("node") or shutil.which("nodejs") or "node"
         cmd = [node_bin, "v15_tool_attempt_source/v15_tool_attempt_source/deob.js", input_filename, output_filename]
         
-        process = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
-        # Leer archivo de salida o usar la salida estándar si el script imprime el resultado
         deobfuscated_code = ""
-        if os.path.exists(output_filename):
+        output_file_from_json = None
+
+        raw_stdout = process.stdout.strip()
+        try:
+            json_start = raw_stdout.find('{')
+            json_end = raw_stdout.rfind('}')
+            if json_start != -1 and json_end != -1:
+                json_data = json.loads(raw_stdout[json_start:json_end+1])
+                if json_data.get("success") and "output" in json_data:
+                    output_file_from_json = json_data["output"]
+        except Exception:
+            pass
+
+        if output_file_from_json and os.path.exists(output_file_from_json):
+            with open(output_file_from_json, "r", encoding="utf-8", errors="ignore") as f:
+                deobfuscated_code = f.read()
+        elif os.path.exists(output_filename):
             with open(output_filename, "r", encoding="utf-8", errors="ignore") as f:
                 deobfuscated_code = f.read()
-        
-        if not deobfuscated_code.strip() and process.returncode == 0:
-            deobfuscated_code = process.stdout
 
-        if process.returncode != 0 or not deobfuscated_code.strip():
-            error_details = process.stderr.strip() or process.stdout.strip() or "Error desconocido en el script de Node.js."
+        if not deobfuscated_code.strip():
+            error_details = process.stderr.strip() or raw_stdout or "Error desconocido al procesar el JSON de salida."
             
             embed_err = discord.Embed(
                 title=f"{EMOJI_INCORRECT} Error",
@@ -217,22 +230,39 @@ async def deobfuscate_luraph(ctx, url: str = None):
                 pass
             return
 
-        # 3. Éxito: Agregar firma y enviar archivo
+        # 3. Formatear contenido final
         final_content = f"-- Deobfuscado por Lexy Hub\n\n{deobfuscated_code}"
-        final_filename = "deobfuscated_lexyhub.lua"
         
+        # Guardar en archivo para adjuntar SIEMPRE
+        final_filename = "deobfuscated_lexyhub.lua"
         with open(final_filename, "w", encoding="utf-8") as f:
             f.write(final_content)
 
+        # Crear una vista previa muy pequeña (primeros 300 caracteres)
+        preview_code = final_content[:300].strip()
+        if len(final_content) > 300:
+            preview_code += "\n..."
+
         embed_success = discord.Embed(
-            title=f"{EMOJI_CORRECT} Deobfuscado",
-            description="Tu código fue Deobfuscado correctamente.",
+            title=f"{EMOJI_CORRECT} SUCCESSFULLY FETCHED",
+            description=f"**Fetched:**\n```lua\n{preview_code}\n```",
             color=discord.Color.green()
         )
         embed_success.set_footer(text="Lexy Hub Protection & Tools")
 
+        # Editar mensaje y enviar SIEMPRE el archivo adjunto
         await status_message.edit(embed=embed_success)
-        await ctx.send(file=discord.File(final_filename, filename="deobfusc_lexyhub.lua"))
+        await ctx.send(file=discord.File(final_filename, filename="deobfuscated_lexyhub.lua"))
+
+        # Limpiar archivo generado tras enviarlo
+        if os.path.exists(final_filename):
+            os.remove(final_filename)
+
+        if output_file_from_json and os.path.exists(output_file_from_json):
+            try:
+                os.remove(output_file_from_json)
+            except Exception:
+                pass
 
     except subprocess.TimeoutExpired:
         embed_err = discord.Embed(
@@ -259,11 +289,11 @@ async def deobfuscate_luraph(ctx, url: str = None):
             pass
     
     finally:
-        for temp_file in [input_filename, output_filename, "deobfuscated_lexyhub.lua"]:
+        for temp_file in [input_filename, output_filename]:
             if os.path.exists(temp_file):
                 try:
                     os.remove(temp_file)
-                except:
+                except Exception:
                     pass
 
 @bot.event
