@@ -33,9 +33,25 @@ async def on_ready():
     print(f"¡El bot está en línea y conectado como: {bot.user}!")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .help"))
 
+# ==================== DETECTOR DE VERSIONES LURAPH ====================
+def detect_luraph_version(code: str) -> str:
+    """Analiza las firmas del código para diferenciar Luraph v15 y v15.1"""
+    code_lower = code.lower()
+    
+    # Buscar patrones específicos o firmas de la VM
+    if "lph_" in code_lower or "luraph" in code_lower:
+        # Indicadores para distinguir v15.1 (usualmente incluye patrones de constantes o marcas de empaquetado recientes)
+        if "v15.1" in code_lower or "Path2D" in code or "15.1" in code:
+            return "Luraph v15.1"
+        elif "v15" in code_lower or "devirtualizing" in code_lower or len(code) > 500:
+            return "Luraph v15 / v15.1 (Estándar)"
+        else:
+            return "Luraph (Versión desconocida o genérica)"
+    
+    return "No detectado / Otro ofuscador"
+
 # ==================== LIMPIADOR Y OPTIMIZADOR PROFESIONAL DE LUAU ====================
 def clean_and_optimize_lua(code: str) -> str:
-    """Remueve errores de desofuscación, comentarios de depuración, líneas rotas y prepara el script para ejecución directa."""
     lines = code.splitlines()
     cleaned_lines = []
     
@@ -93,14 +109,55 @@ def format_size(size_bytes):
 async def custom_help(ctx):
     embed = discord.Embed(
         title="🛡️ Lexy Hub — Centro de Herramientas",
-        description="Plataforma avanzada de ingeniería inversa, desofuscación y optimización de scripts en Luau.",
+        description="Plataforma avanzada de ingeniería inversa, detección y optimización de scripts en Luau.",
         color=discord.Color.from_rgb(30, 30, 45)
     )
-    embed.add_field(name="🔓 `.luraph <URL / Adjunto>`", value="Desofusca scripts protegidos con Luraph v15 eliminando capas de virtualización.", inline=False)
+    embed.add_field(name="🔍 `.detect <URL / Adjunto>`", value="Detecta automáticamente si un script es Luraph v15 o v15.1.", inline=False)
+    embed.add_field(name="🔓 `.luraph <URL / Adjunto>`", value="Desofusca scripts protegidos con Luraph v15/v15.1.", inline=False)
     embed.add_field(name="✨ `.beautify <URL / Adjunto>`", value="Limpia errores, formatea y deja el código Luau 100% listo para ejecutar.", inline=False)
     embed.add_field(name="📥 `.get <URL>`", value="Extrae y muestra el contenido de texto plano directamente desde URLs externas.", inline=False)
     embed.set_footer(text="Lexy Hub Security • High Performance Tools")
     await ctx.send(embed=embed)
+
+# ==================== COMANDO: .DETECT ====================
+@bot.command(name="detect")
+async def cmd_detect(ctx, url: str = None):
+    has_att = bool(ctx.message.attachments)
+    if not has_att and not url:
+        await ctx.send(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="Adjunta un archivo o provee un enlace para analizar.", color=discord.Color.red()))
+        return
+
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Analizando...", description="Detectando versión de Luraph...", color=discord.Color.blue()))
+
+    try:
+        source_link, code = "Desconocido", ""
+        if has_att:
+            att = ctx.message.attachments[0]
+            source_link = att.url
+            code = (await att.read()).decode("utf-8", errors="ignore")
+        else:
+            if not url.startswith(("http://", "https://")): url = "https://" + url
+            source_link = url
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=15) as res:
+                    if res.status != 200:
+                        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="No se pudo acceder a la URL.", color=discord.Color.red()))
+                        return
+                    code = (await res.read()).decode("utf-8", errors="ignore")
+
+        detected_version = detect_luraph_version(code)
+
+        embed = discord.Embed(
+            title=f"{EMOJI_CORRECT} LURAPH SIGNATURE DETECTED",
+            color=discord.Color.from_rgb(0, 204, 102)
+        )
+        embed.add_field(name="Versión Identificada", value=f"```ini\n[{detected_version}]\n```", inline=False)
+        embed.add_field(name="Source", value=source_link, inline=False)
+        embed.set_footer(text="Lexy Hub Protection & Tools • Detector v1.0")
+
+        await msg.edit(content="", embed=embed)
+    except Exception as e:
+        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description=str(e)[:200], color=discord.Color.red()))
 
 # ==================== COMANDO: .GET ====================
 @bot.command(name="get")
@@ -179,17 +236,16 @@ async def cmd_beautify(ctx, url: str = None):
         if len(final_text.splitlines()) > 6:
             preview += "\n..."
 
-        response_content = (
-            f"## {EMOJI_CORRECT} LUA SCRIPT BEAUTIFIED\n"
-            f"**Output Preview**\n"
-            f"```lua\n{preview}\n```\n"
-            f"Source: {source_link}\n"
-            f"-# input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s\n"
-            f"**Output File:**"
+        embed = discord.Embed(
+            title=f"{EMOJI_CORRECT} LUA SCRIPT BEAUTIFIED",
+            color=discord.Color.from_rgb(0, 204, 102)
         )
+        embed.add_field(name="Output Preview", value=f"```lua\n{preview}\n```", inline=False)
+        embed.add_field(name="Source", value=source_link, inline=False)
+        embed.set_footer(text=f"input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s")
 
-        await msg.delete()
-        await ctx.send(response_content, file=discord.File(path, filename="executable_script.lua"))
+        await msg.edit(content="**Output File:**", embed=embed)
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
         os.remove(path)
     except Exception as e:
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description=str(e)[:200], color=discord.Color.red()))
@@ -207,7 +263,7 @@ async def cmd_luraph(ctx, url: str = None):
         return
 
     start_time = time.time()
-    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando...", description="Analizando capas de virtualización de Luraph v15...", color=discord.Color.from_rgb(0, 128, 255)))
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando...", description="Analizando capas de virtualización de Luraph v15/v15.1...", color=discord.Color.from_rgb(0, 128, 255)))
 
     try:
         source_link = "Desconocido"
@@ -275,17 +331,16 @@ async def cmd_luraph(ctx, url: str = None):
         if len(final_text.splitlines()) > 6:
             preview += "\n..."
 
-        response_content = (
-            f"## {EMOJI_CORRECT} LURAPH V15 DEOBFUSCATED\n"
-            f"**Output Preview**\n"
-            f"```lua\n{preview}\n```\n"
-            f"Source: {source_link}\n"
-            f"-# input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s\n"
-            f"**Output File:**"
+        embed = discord.Embed(
+            title=f"{EMOJI_CORRECT} LURAPH V15 / V15.1 DEOBFUSCATED",
+            color=discord.Color.from_rgb(0, 204, 102)
         )
+        embed.add_field(name="Output Preview", value=f"```lua\n{preview}\n```", inline=False)
+        embed.add_field(name="Source", value=source_link, inline=False)
+        embed.set_footer(text=f"input: {format_size(input_size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s")
 
-        await msg.delete()
-        await ctx.send(response_content, file=discord.File(path, filename="executable_script.lua"))
+        await msg.edit(content="**Output File:**", embed=embed)
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
 
         for p in [path, input_file, output_file, json_path, expected_path]:
             if p and os.path.exists(p):
