@@ -6,6 +6,7 @@ import shutil
 import json
 import re
 import time
+import tempfile
 import logging
 import asyncio
 import aiohttp
@@ -15,7 +16,7 @@ from discord.ext import commands
 # ==================== CONFIGURACIÓN DE LOGGING ====================
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname] %(name)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger("LexyHubBot")
@@ -31,6 +32,11 @@ LURAPH_DIR = "v15_tool_attempt_source"
 
 PROM_ZIP = "Prometheus-Deobfuscator-main.zip"
 PROM_DIR = "Prometheus-Deobfuscator-main"
+
+MOON_ZIP = "moonsec-v3.zip"
+MOON_DIR = "moonsec-v3"
+MOON_DLL = os.path.join(MOON_DIR, "bin", "Release", "net9.0", "MoonsecDeobfuscator.dll")
+MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
 if os.path.exists(LURAPH_ZIP) and not os.path.exists(LURAPH_DIR):
     logger.info(f"Descomprimiendo {LURAPH_ZIP}...")
@@ -49,6 +55,15 @@ if os.path.exists(PROM_ZIP) and not os.path.exists(PROM_DIR):
         logger.info("Prometheus descomprimido con éxito.")
     except Exception as e:
         logger.error(f"Error al descomprimir {PROM_ZIP}: {e}")
+
+if os.path.exists(MOON_ZIP) and not os.path.exists(MOON_DIR):
+    logger.info(f"Descomprimiendo {MOON_ZIP}...")
+    try:
+        with zipfile.ZipFile(MOON_ZIP, 'r') as zip_ref:
+            zip_ref.extractall(".")
+        logger.info("MoonSec V3 descomprimido con éxito.")
+    except Exception as e:
+        logger.error(f"Error al descomprimir {MOON_ZIP}: {e}")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -119,7 +134,11 @@ class LuauOptimizer:
     @staticmethod
     def detect_version(code: str) -> str:
         code_lower = code.lower()
-        if "prometheus" in code_lower or "prm_" in code_lower or "pdeobf" in code_lower:
+        if re.search(r"protected (?:with|using) moonsec v3\b", code[:3000], re.I):
+            return "MoonSec V3"
+        elif "moonsec" in code_lower:
+            return "MoonSec (V2 / variante no soportada)"
+        elif "prometheus" in code_lower or "prm_" in code_lower or "pdeobf" in code_lower:
             return "Prometheus Obfuscator"
         elif "lph_" in code_lower or "luraph" in code_lower or "devirtualizing" in code_lower:
             if "v15.1" in code_lower or "path2d" in code or "15.1" in code_lower:
@@ -193,12 +212,13 @@ class LuauOptimizer:
 async def cmd_help(ctx):
     embed = discord.Embed(
         title="🛡️ Lexy Hub — Panel de Ingeniería Inversa",
-        description="Suite avanzada para desofuscar, detectar y optimizar scripts de Luau (Luraph & Prometheus).",
+        description="Suite avanzada para desofuscar, detectar y optimizar scripts de Luau (Luraph, Prometheus & MoonSec V3).",
         color=discord.Color.from_rgb(25, 25, 35)
     )
     embed.add_field(name="🔍 `.detect <URL / Adjunto / Responder>`", value="Identifica el ofuscador del script.", inline=False)
     embed.add_field(name="🔓 `.luraph <URL / Adjunto / Responder>`", value="Desofusca scripts de Luraph v15/v15.1.", inline=False)
     embed.add_field(name="🔥 `.prometheus <URL / Adjunto / Responder>`", value="Desofusca scripts protegidos con Prometheus.", inline=False)
+    embed.add_field(name="🌙 `.moonveil <URL / Adjunto / Responder>`", value="Desofusca scripts protegidos con MoonSec V3.", inline=False)
     embed.add_field(name="📋 `.list`", value="Muestra la lista de desofuscadores y herramientas integradas.", inline=False)
     embed.add_field(name="✨ `.beautify <URL / Adjunto / Responder>`", value="Limpia errores y re-indenta código Luau.", inline=False)
     embed.add_field(name="📥 `.get <URL>`", value="Recupera código fuente en texto plano desde enlaces externos.", inline=False)
@@ -224,7 +244,12 @@ async def cmd_list(ctx):
         inline=False
     )
     embed.add_field(
-        name="3️⃣ Luau Beautifier & Fixer",
+        name="3️⃣ MoonSec V3 Deobfuscator",
+        value="• **Versiones:** MoonSec V3 (V2 no soportado)\n• **Comando:** `.moonveil` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
+        inline=False
+    )
+    embed.add_field(
+        name="4️⃣ Luau Beautifier & Fixer",
         value="• **Función:** Limpieza y optimización\n• **Comando:** `.beautify` (adjunto, URL o respondiendo)\n• **Estado:** `Activo`",
         inline=False
     )
@@ -463,6 +488,109 @@ async def cmd_prometheus(ctx, url: str = None):
     except Exception as e:
         logger.error(f"Error crítico en .prometheus: {e}")
         await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error Crítico", description=str(e)[:200], color=discord.Color.red()))
+
+# ==================== COMANDO: .MOONVEIL (MoonSec V3) ====================
+async def run_stage(args, deadline: float, label: str):
+    """Ejecuta una etapa del pipeline respetando un presupuesto de tiempo compartido."""
+    proc = await asyncio.create_subprocess_exec(
+        *[str(a) for a in args],
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    remaining = deadline - asyncio.get_running_loop().time()
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), max(1, remaining))
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise RuntimeError(f"{label}: tiempo agotado")
+    if proc.returncode:
+        diag = (stderr or stdout).decode("utf-8", "replace").strip()
+        raise RuntimeError(f"{label} falló: {diag[:800]}")
+    return stdout, stderr
+
+@bot.command(name="moonveil", aliases=["moonsec", "msd"])
+async def cmd_moonveil(ctx, url: str = None):
+    start_time = time.time()
+    msg = await ctx.send(embed=discord.Embed(title=f"{EMOJI_LOADING} Desofuscando MoonSec V3...", description="Devirtualizando bytecode...", color=discord.Color.from_rgb(120, 80, 255)))
+
+    work_dir = tempfile.mkdtemp(prefix=f"moon_{ctx.author.id}_")
+    path = f"executable_script_{ctx.author.id}.lua"
+
+    try:
+        code, source_link, input_size = await get_code_and_source(ctx, url)
+
+        if not re.search(r"protected (?:with|using) MoonSec V3\b", code[:3000], re.I):
+            await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} No compatible", description="No se detectó el banner de **MoonSec V3** (MoonSec V2 no está soportado).", color=discord.Color.red()))
+            return
+
+        dotnet_bin = shutil.which("dotnet") or os.path.expanduser("~/.dotnet/dotnet")
+        java_bin = os.getenv("MOONSEC_JAVA") or shutil.which("java")
+        missing = []
+        if not dotnet_bin or not os.path.exists(dotnet_bin): missing.append(".NET 9 runtime (`dotnet`)")
+        if not java_bin: missing.append("Java 8+ (`java`)")
+        if not os.path.isfile(MOON_DLL) or not os.path.isfile(MOON_JAR):
+            missing.append(f"archivos de `{MOON_ZIP}` (¿está junto al bot?)")
+        if missing:
+            await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Falta en el servidor", description="\n".join(f"• {m}" for m in missing), color=discord.Color.red()))
+            return
+
+        input_file = os.path.join(work_dir, "input.lua")
+        bytecode_file = os.path.join(work_dir, "recovered.luac")
+        output_file = os.path.join(work_dir, "deobfuscated.lua")
+        with open(input_file, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        deadline = asyncio.get_running_loop().time() + 300
+
+        # Etapa 1: MoonSec V3 -> bytecode Lua 5.1
+        await run_stage([dotnet_bin, MOON_DLL, "-dev", "-i", input_file, "-o", bytecode_file], deadline, "MoonSec")
+        if not os.path.isfile(bytecode_file) or open(bytecode_file, "rb").read(5) != b"\x1bLua\x51":
+            raise RuntimeError("MoonSec no generó bytecode Lua 5.1 válido.")
+
+        # Etapa 2: bytecode -> código fuente con unluac
+        await run_stage([java_bin, "-Xmx512m", "-jar", MOON_JAR, "--nodebug", "-o", output_file, bytecode_file], deadline, "unluac")
+        if not os.path.isfile(output_file):
+            raise RuntimeError("unluac no generó salida.")
+        with open(output_file, "r", encoding="utf-8", errors="ignore") as f:
+            result_code = f.read()
+        if not result_code.strip():
+            raise RuntimeError("unluac produjo una salida vacía.")
+
+        ready_code = LuauOptimizer.beautify(result_code)
+        final_text = f"-- Deobfuscado por Lexy Deobf\n\n{ready_code}"
+
+        with open(path, "w", encoding="utf-8") as f: f.write(final_text)
+
+        output_size = os.path.getsize(path)
+        elapsed = time.time() - start_time
+
+        preview_lines = final_text.splitlines()[:8]
+        preview = "\n".join(preview_lines)
+        if len(final_text.splitlines()) > 8: preview += "\n--"
+
+        embed_desc = (
+            f"## {EMOJI_CORRECT} MOONSEC V3 DEOBFUSCATED\n"
+            f"**Output Preview**\n"
+            f"```lua\n{preview}\n```\n"
+            f"Source: {source_link}\n"
+            f"-# input: {LuauOptimizer.format_size(input_size)} · output: {LuauOptimizer.format_size(output_size)} · took: {elapsed:.1f}s\n\n"
+            f"**Output File:**"
+        )
+        embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
+
+        await msg.delete()
+        await ctx.send(embed=embed)
+        await ctx.send(file=discord.File(path, filename="executable_script.lua"))
+
+    except Exception as e:
+        logger.error(f"Error crítico en .moonveil: {e}")
+        await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error Crítico", description=f"```{str(e)[:400]}```", color=discord.Color.red()))
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        if os.path.exists(path):
+            try: os.remove(path)
+            except: pass
 
 # ==================== INICIO DEL BOT ====================
 TOKEN = os.getenv("DISCORD_TOKEN")
