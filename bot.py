@@ -268,7 +268,6 @@ async def cmd_beautify(ctx, url: str = None):
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
 
         await msg.delete()
-        # El archivo va junto en el ctx.send, lo que en Discord lo coloca visualmente abajo del embed
         await ctx.send(embed=embed, file=discord.File(path, filename="executable_script.lua"))
         if os.path.exists(path): os.remove(path)
     except Exception as e:
@@ -404,7 +403,7 @@ async def cmd_prometheus(ctx, url: str = None):
             with open(input_file, "wb") as f: f.write(code_data)
 
         node_bin = shutil.which("node") or shutil.which("nodejs") or "node"
-        cmd = [node_bin, "prometheus_tool/deob.js", input_file, output_file]
+        cmd = [node_bin, "Prometheus-Deobfuscator-main/bin/pdeobf.js", input_file, output_file]
 
         process = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=65)
 
@@ -416,11 +415,12 @@ async def cmd_prometheus(ctx, url: str = None):
             result_code = process.stdout.strip()
 
         if not result_code.strip():
-            await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Fallo", description="No se pudo desofuscar el script de Prometheus.", color=discord.Color.red()))
+            err_output = process.stderr.strip() or process.stdout.strip() or "Sin detalles"
+            await msg.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Fallo", description=f"No se pudo desofuscar con Prometheus.\n```{err_output[:150]}```", color=discord.Color.red()))
             return
 
         ready_code = LuauOptimizer.beautify(result_code)
-        final_text = f"-- Deobfuscado por Lexy Deobf (Prometheus)\n\n{ready_code}"
+        final_text = f"-- Deobfuscado por Lexy Deobf\n\n{ready_code}"
 
         path = "executable_script.lua"
         with open(path, "w", encoding="utf-8") as f: f.write(final_text)
