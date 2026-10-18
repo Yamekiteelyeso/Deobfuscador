@@ -1,6 +1,7 @@
 import os
 import zipfile
 import subprocess
+import shutil
 import aiohttp
 import discord
 from discord.ext import commands
@@ -131,7 +132,6 @@ async def deobfuscate_luraph(ctx, url: str = None):
     input_filename = f"input_{ctx.author.id}.lua"
     output_filename = f"output_{ctx.author.id}.lua"
 
-    # Verificar si el usuario adjuntó un archivo O proporcionó una URL
     has_attachment = bool(ctx.message.attachments)
     
     if not has_attachment and not url:
@@ -143,7 +143,6 @@ async def deobfuscate_luraph(ctx, url: str = None):
         await ctx.send(embed=embed_err)
         return
 
-    # Embed de Carga (Loading)
     embed_loading = discord.Embed(
         title=":loading: Deobfuscando",
         description="Estamos Deobfuscando tu código, sé paciente.",
@@ -152,7 +151,7 @@ async def deobfuscate_luraph(ctx, url: str = None):
     status_message = await ctx.send(embed=embed_loading)
 
     try:
-        # CASO A: El usuario envió un archivo adjunto
+        # CASO A: Archivo adjunto
         if has_attachment:
             attachment = ctx.message.attachments[0]
             if not attachment.filename.lower().endswith((".txt", ".lua")):
@@ -163,7 +162,7 @@ async def deobfuscate_luraph(ctx, url: str = None):
                 return
             await attachment.save(input_filename)
 
-        # CASO B: El usuario envió una URL
+        # CASO B: URL proporcionada
         elif url:
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
@@ -182,11 +181,12 @@ async def deobfuscate_luraph(ctx, url: str = None):
             with open(input_filename, "w", encoding="utf-8") as f:
                 f.write(script_content)
 
-        # 2. Ejecutar la herramienta Node.js de desofuscación
-        cmd = ["node", "v15_tool_attempt_source/v15_tool_attempt_source/deob.js", input_filename, output_filename]
+        # 2. Encontrar Node.js dinámicamente y ejecutar la herramienta
+        node_bin = shutil.which("node") or shutil.which("nodejs") or "node"
+        cmd = [node_bin, "v15_tool_attempt_source/v15_tool_attempt_source/deob.js", input_filename, output_filename]
+        
         process = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
 
-        # Verificar si hubo fallo o no se generó el archivo de salida
         if process.returncode != 0 or not os.path.exists(output_filename):
             error_details = process.stderr.strip() or process.stdout.strip() or "Error desconocido en el script de Node.js."
             
@@ -207,14 +207,12 @@ async def deobfuscate_luraph(ctx, url: str = None):
         with open(output_filename, "r", encoding="utf-8", errors="ignore") as f:
             deobfuscated_code = f.read()
 
-        # Agregar la firma personalizada de Lexy Hub al inicio
         final_content = f"-- Deobfuscado por Lexy Hub\n\n{deobfuscated_code}"
-
         final_filename = "deobfuscated_lexyhub.lua"
+        
         with open(final_filename, "w", encoding="utf-8") as f:
             f.write(final_content)
 
-        # Embed de Éxito (Correct)
         embed_success = discord.Embed(
             title=":correct: Deobfuscado",
             description="Tu código fue Deobfuscado correctamente.",
@@ -250,7 +248,6 @@ async def deobfuscate_luraph(ctx, url: str = None):
             pass
     
     finally:
-        # Limpieza segura de archivos temporales
         for temp_file in [input_filename, output_filename, "deobfuscated_lexyhub.lua"]:
             if os.path.exists(temp_file):
                 try:
