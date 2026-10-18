@@ -34,26 +34,23 @@ async def on_ready():
 
 # ==================== FUNCIÓN AUXILIAR: FORMATEAR LUA (BEAUTIFY) ====================
 def beautify_lua_code(code: str) -> str:
-    """Función para ordenar la indentación de código Lua de forma básica y limpia."""
+    """Función para ordenar la indentación de código Lua de forma limpia."""
     lines = code.splitlines()
     formatted_lines = []
     indent_level = 0
-    indent_str = "    " # 4 espacios
+    indent_str = "    "
 
-    # Palabras clave que aumentan o disminuyen la indentación
     increase_keywords = {"do", "then", "repeat", "function"}
     block_starters = {"if", "for", "while", "local function"}
 
     for line in lines:
         stripped = line.strip()
         
-        # Reducir indentación en cierres o palabras de salida
         if stripped.startswith(("end", "until", "else", "elseif")) or stripped == "}":
             indent_level = max(0, indent_level - 1)
 
         formatted_lines.append((indent_str * indent_level) + stripped)
 
-        # Aumentar indentación si la línea abre un bloque
         lower_line = stripped.lower()
         if any(lower_line.startswith(kw) for kw in block_starters) and (any(kw in lower_line for kw in increase_keywords) or lower_line.endswith("do") or lower_line.endswith("then")):
             indent_level += 1
@@ -112,7 +109,7 @@ async def custom_help(ctx):
     )
     
     embed.set_footer(
-        text="Lexy Hub Protection & Tools • Desarrollado para alta velocidad",
+        text="Lexy Hub Protection & Tools • Alta Velocidad",
         icon_url=bot.user.display_avatar.url if bot.user.display_avatar else None
     )
     await ctx.send(embed=embed)
@@ -201,7 +198,7 @@ async def beautify_script(ctx, url: str = None):
     
     if not has_attachment and not url:
         embed_err = discord.Embed(
-            title=f"{EMOJI_INCORRECT} Error",
+            title=f"{EMOJI_INCORRECT} Error de Argumentos",
             description="Por favor adjunta un archivo `.lua`/`.txt` o proporciona una URL válida para embellecer.",
             color=discord.Color.from_rgb(235, 59, 90)
         )
@@ -210,38 +207,37 @@ async def beautify_script(ctx, url: str = None):
 
     embed_loading = discord.Embed(
         title=f"{EMOJI_LOADING} Embelleciendo código",
-        description="Ordenando la indentación y dando formato al script...",
+        description="Ordenando la indentación y estructurando el script...",
         color=discord.Color.from_rgb(52, 152, 219)
     )
     status_message = await ctx.send(embed=embed_loading)
 
     try:
-        source_identifier = "Archivo adjunto"
+        source_display = "Archivo adjunto"
         raw_code = ""
 
         if has_attachment:
             attachment = ctx.message.attachments[0]
             if not attachment.filename.lower().endswith((".txt", ".lua")):
-                await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="El archivo debe ser formato `.txt` or `.lua`.", color=discord.Color.from_rgb(235, 59, 90)))
+                await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Formato Inválido", description="El archivo debe ser formato `.txt` o `.lua`.", color=discord.Color.from_rgb(235, 59, 90)))
                 return
-            source_identifier = attachment.filename
+            source_display = f"[`{attachment.filename}`]({attachment.url})"
             raw_code = (await attachment.read()).decode("utf-8", errors="ignore")
         elif url:
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
-            source_identifier = url
+            source_display = f"[Enlace Fuente]({url})"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=15) as response:
                     if response.status != 200:
-                        await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="No se pudo descargar el contenido de la URL.", color=discord.Color.from_rgb(235, 59, 90)))
+                        await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error de Enlace", description="No se pudo descargar el contenido de la URL proporcionada.", color=discord.Color.from_rgb(235, 59, 90)))
                         return
                     raw_code = await response.text()
 
         if not raw_code.strip():
-            await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Error", description="El contenido está vacío.", color=discord.Color.from_rgb(235, 59, 90)))
+            await status_message.edit(embed=discord.Embed(title=f"{EMOJI_INCORRECT} Contenido Vacío", description="El script proporcionado no contiene código válido.", color=discord.Color.from_rgb(235, 59, 90)))
             return
 
-        # Aplicar formato beautify
         beautified_code = beautify_lua_code(raw_code)
         final_content = f"-- Formateado por Lexy Hub\n\n{beautified_code}"
 
@@ -249,16 +245,18 @@ async def beautify_script(ctx, url: str = None):
         with open(final_filename, "w", encoding="utf-8") as f:
             f.write(final_content)
 
-        preview_code = final_content[:400].strip()
-        if len(final_content) > 400:
-            preview_code += "\n..."
+        # Vista previa compacta (solo las primeras 5 líneas o ~200 caracteres para que no sea largo)
+        preview_lines = "\n".join(final_content.splitlines()[:6])
+        if len(final_content.splitlines()) > 6:
+            preview_lines += "\n..."
 
         embed_success = discord.Embed(
             title=f"{EMOJI_CORRECT} SUCCESSFULLY BEAUTIFIED",
-            description=f"🔗 **Fuente:** `{source_identifier}`\n\n**Fetched:**\n```lua\n{preview_code}\n```",
-            color=discord.Color.from_rgb(32, 191, 107)
+            color=discord.Color.from_rgb(46, 204, 113) # Verde elegante
         )
-        embed_success.set_footer(text="Lexy Hub Protection & Tools")
+        embed_success.add_field(name="🔗 Fuente", value=source_display, inline=False)
+        embed_success.add_field(name="📄 Preview del Código", value=f"```lua\n{preview_lines}\n```", inline=False)
+        embed_success.set_footer(text="Lexy Hub Protection & Tools • Script formateado con éxito")
 
         await status_message.edit(embed=embed_success)
         await ctx.send(file=discord.File(final_filename, filename="beautified_lexyhub.lua"))
@@ -268,8 +266,8 @@ async def beautify_script(ctx, url: str = None):
 
     except Exception as e:
         embed_err = discord.Embed(
-            title=f"{EMOJI_INCORRECT} Error",
-            description=f"Ocurrió un error inesperado al procesar el código: ```{str(e)[:200]}```",
+            title=f"{EMOJI_INCORRECT} Error Inesperado",
+            description=f"Ocurrió un fallo al procesar el código: ```{str(e)[:200]}```",
             color=discord.Color.from_rgb(235, 59, 90)
         )
         await status_message.edit(embed=embed_err)
@@ -285,8 +283,8 @@ async def deobfuscate_luraph(ctx, url: str = None):
     
     if not has_attachment and not url:
         embed_err = discord.Embed(
-            title=f"{EMOJI_INCORRECT} Error",
-            description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+            title=f"{EMOJI_INCORRECT} Parámetros Faltantes",
+            description="Debes adjuntar un archivo `.lua`/`.txt` o proporcionar una URL válida de Luraph.",
             color=discord.Color.from_rgb(235, 59, 90)
         )
         await ctx.send(embed=embed_err)
@@ -294,45 +292,45 @@ async def deobfuscate_luraph(ctx, url: str = None):
 
     embed_loading = discord.Embed(
         title=f"{EMOJI_LOADING} Deobfuscando",
-        description="Estamos Deobfuscando tu código, se paciente.",
+        description="Analizando y desofuscando el script, sé paciente...",
         color=discord.Color.from_rgb(52, 152, 219)
     )
     status_message = await ctx.send(embed=embed_loading)
 
     try:
-        source_identifier = "Archivo adjunto"
+        source_display = "Archivo adjunto"
         if has_attachment:
             attachment = ctx.message.attachments[0]
             if not attachment.filename.lower().endswith((".txt", ".lua")):
                 embed_err = discord.Embed(
-                    title=f"{EMOJI_INCORRECT} Error",
-                    description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+                    title=f"{EMOJI_INCORRECT} Formato Inválido",
+                    description="El archivo adjunto debe ser formato `.txt` o `.lua`.",
                     color=discord.Color.from_rgb(235, 59, 90)
                 )
                 await status_message.edit(embed=embed_err)
                 return
             if attachment.size > 5 * 1024 * 1024:
                 embed_err = discord.Embed(
-                    title=f"{EMOJI_INCORRECT} Error",
-                    description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+                    title=f"{EMOJI_INCORRECT} Archivo Demasiado Grande",
+                    description="El límite máximo permitido es de 5MB.",
                     color=discord.Color.from_rgb(235, 59, 90)
                 )
                 await status_message.edit(embed=embed_err)
                 return
             await attachment.save(input_filename)
-            source_identifier = attachment.filename
+            source_display = f"[`{attachment.filename}`]({attachment.url})"
 
         elif url:
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
             
-            source_identifier = url
+            source_display = f"[Enlace Fuente]({url})"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=15) as response:
                     if response.status != 200:
                         embed_err = discord.Embed(
-                            title=f"{EMOJI_INCORRECT} Error",
-                            description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+                            title=f"{EMOJI_INCORRECT} Error de Descarga",
+                            description="No se pudo acceder al contenido de la URL proporcionada.",
                             color=discord.Color.from_rgb(235, 59, 90)
                         )
                         await status_message.edit(embed=embed_err)
@@ -341,8 +339,8 @@ async def deobfuscate_luraph(ctx, url: str = None):
             
             if not script_content.strip():
                 embed_err = discord.Embed(
-                    title=f"{EMOJI_INCORRECT} Error",
-                    description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+                    title=f"{EMOJI_INCORRECT} URL Vacía",
+                    description="El enlace proporcionado no contiene texto válido.",
                     color=discord.Color.from_rgb(235, 59, 90)
                 )
                 await status_message.edit(embed=embed_err)
@@ -385,14 +383,14 @@ async def deobfuscate_luraph(ctx, url: str = None):
             error_details = process.stderr.strip() or raw_stdout or "Error desconocido al procesar el JSON de salida."
             
             embed_err = discord.Embed(
-                title=f"{EMOJI_INCORRECT} Error",
-                description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+                title=f"{EMOJI_INCORRECT} Fallo de Desofuscación",
+                description="El código no se pudo desofuscar, verifica si realmente está protegido con Luraph v15.",
                 color=discord.Color.from_rgb(235, 59, 90)
             )
             await status_message.edit(embed=embed_err)
             
             try:
-                await ctx.author.send(f"⚠️ **Detalle del fallo de desofuscación:**\n```{error_details[:1900]}```")
+                await ctx.author.send(f"⚠️ **Detalle del fallo técnico:**\n```{error_details[:1900]}```")
             except discord.Forbidden:
                 pass
             return
@@ -403,16 +401,18 @@ async def deobfuscate_luraph(ctx, url: str = None):
         with open(final_filename, "w", encoding="utf-8") as f:
             f.write(final_content)
 
-        preview_code = final_content[:400].strip()
-        if len(final_content) > 400:
-            preview_code += "\n..."
+        # Vista previa compacta (primeras 6 líneas)
+        preview_lines = "\n".join(final_content.splitlines()[:6])
+        if len(final_content.splitlines()) > 6:
+            preview_lines += "\n..."
 
         embed_success = discord.Embed(
             title=f"{EMOJI_CORRECT} SUCCESSFULLY FETCHED",
-            description=f"🔗 **Fuente:** `{source_identifier}`\n\n**Fetched:**\n```lua\n{preview_code}\n```",
-            color=discord.Color.from_rgb(32, 191, 107)
+            color=discord.Color.from_rgb(46, 204, 113)
         )
-        embed_success.set_footer(text="Lexy Hub Protection & Tools")
+        embed_success.add_field(name="🔗 Fuente", value=source_display, inline=False)
+        embed_success.add_field(name="📄 Preview del Código", value=f"```lua\n{preview_lines}\n```", inline=False)
+        embed_success.set_footer(text="Lexy Hub Protection & Tools • Desofuscación completada")
 
         await status_message.edit(embed=embed_success)
         await ctx.send(file=discord.File(final_filename, filename="deobfuscated_lexyhub.lua"))
@@ -434,25 +434,25 @@ async def deobfuscate_luraph(ctx, url: str = None):
 
     except subprocess.TimeoutExpired:
         embed_err = discord.Embed(
-            title=f"{EMOJI_INCORRECT} Error",
-            description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+            title=f"{EMOJI_INCORRECT} Tiempo Agotado",
+            description="El proceso tardó demasiado tiempo (Timeout de 60s) y fue cancelado.",
             color=discord.Color.from_rgb(235, 59, 90)
         )
         await status_message.edit(embed=embed_err)
         try:
-            await ctx.author.send("⚠️ **Detalle del fallo:** El proceso tardó demasiado tiempo y fue cancelado.")
+            await ctx.author.send("⚠️ **Detalle del fallo:** El proceso superó el límite de tiempo.")
         except discord.Forbidden:
             pass
         
     except Exception as e:
         embed_err = discord.Embed(
-            title=f"{EMOJI_INCORRECT} Error",
-            description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+            title=f"{EMOJI_INCORRECT} Error Inesperado",
+            description="Ocurrió un error interno durante la ejecución del comando.",
             color=discord.Color.from_rgb(235, 59, 90)
         )
         await status_message.edit(embed=embed_err)
         try:
-            await ctx.author.send(f"⚠️ **Detalle del error inesperado:**\n```{str(e)}```")
+            await ctx.author.send(f"⚠️ **Detalle del error:**\n```{str(e)}```")
         except discord.Forbidden:
             pass
     
