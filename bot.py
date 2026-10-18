@@ -1,10 +1,11 @@
 import os
 import zipfile
 import subprocess
+import aiohttp
 import discord
 from discord.ext import commands
 
-# --- DESCOMPRESIÓN AUTOMÁTICA ---
+# --- DESCOMPRESIÓN AUTOMÁTICA DE LA HERRAMIENTA ---
 ZIP_FILE = "luraphv15_1_deobf.zip"
 TARGET_DIR = "v15_tool_attempt_source"
 
@@ -13,92 +14,243 @@ if os.path.exists(ZIP_FILE) and not os.path.exists(TARGET_DIR):
     with zipfile.ZipFile(ZIP_FILE, 'r') as zip_ref:
         zip_ref.extractall(TARGET_DIR)
 
+# Configuración de intenciones (Intents)
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=".", intents=intents)
+bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
     print(f"¡El bot está en línea y conectado como: {bot.user}!")
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .luraph"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="scripts | .help"))
 
-@bot.command(name="luraph", help="Desofusca scripts de Luraph adjuntando un archivo .lua o .txt")
-async def deobfuscate_luraph(ctx):
-    if not ctx.message.attachments:
-        await ctx.send("# :incorrect: Error\nEl código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.")
-        return
-
-    attachment = ctx.message.attachments[0]
+# ==================== COMANDO: .HELP ====================
+@bot.command(name="help")
+async def custom_help(ctx):
+    embed = discord.Embed(
+        title="🤖 Panel de Ayuda - Lexy Hub",
+        description="Bienvenido al centro de herramientas. Aquí tienes la lista de comandos disponibles:",
+        color=discord.Color.dark_purple()
+    )
     
-    if not attachment.filename.lower().endswith((".txt", ".lua")):
-        await ctx.send("# :incorrect: Error\nEl código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.")
+    embed.add_field(
+        name="🔓 `.luraph`",
+        value="Desofusca un script de Luraph. Puedes **adjuntar un archivo** (`.lua`/`.txt`) o pasar una **URL** (Pastefy, Pastebin, Raw).\n**Ejemplo:** `.luraph https://pastefy.app/jwjdsj/raw`",
+        inline=False
+    )
+    embed.add_field(
+        name="📥 `.get <url>`",
+        value="Obtiene y muestra el contenido de texto de una URL directamente.\n**Ejemplo:** `.get https://pastefy.app/jwjdsj/raw`",
+        inline=False
+    )
+    embed.add_field(
+        name="ℹ️ `.help`",
+        value="Muestra este panel de ayuda.",
+        inline=False
+    )
+    
+    embed.set_footer(text="Lexy Hub Protection & Tools")
+    await ctx.send(embed=embed)
+
+# ==================== COMANDO: .GET ====================
+@bot.command(name="get")
+async def cmd_get(ctx, url: str = None):
+    if not url:
+        embed_err = discord.Embed(
+            title=":incorrect: Error",
+            description="Debes proporcionar una URL válida.\n\n**Ejemplo:** `.get https://pastefy.app/jwjdsj/raw`",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed_err)
         return
 
-    if attachment.size > 5 * 1024 * 1024:
-        await ctx.send("# :incorrect: Error\nEl código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.")
-        return
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
 
-    # Mensaje de carga inicial
-    status_message = await ctx.send("# :loading: Deobfuscando\nEstamos Deobfuscando tu código, se paciente.")
+    embed_loading = discord.Embed(
+        title="⏳ Descargando contenido...",
+        description=f"Obteniendo datos de la URL proporcionada...",
+        color=discord.Color.blue()
+    )
+    status_msg = await ctx.send(embed=embed_loading)
 
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=15) as response:
+                if response.status != 200:
+                    embed_err = discord.Embed(
+                        title=":incorrect: Error",
+                        description=f"No se pudo obtener el contenido. Código HTTP: `{response.status}`",
+                        color=discord.Color.red()
+                    )
+                    await status_msg.edit(embed=embed_err)
+                    return
+
+                content = await response.text()
+
+        if not content.strip():
+            embed_empty = discord.Embed(
+                title=":incorrect: Error",
+                description="La URL proporcionada no contiene texto o está vacía.",
+                color=discord.Color.red()
+            )
+            await status_msg.edit(embed=embed_empty)
+            return
+
+        if len(content) <= 1900:
+            await status_msg.delete()
+            await ctx.send(f"```lua\n{content}\n```")
+        else:
+            temp_file = f"get_{ctx.author.id}.lua"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            embed_success = discord.Embed(
+                title=":correct: Contenido descargado",
+                description="El contenido supera el límite de texto y se adjuntó como archivo.",
+                color=discord.Color.green()
+            )
+            await status_msg.edit(embed=embed_success)
+            await ctx.send(file=discord.File(temp_file, filename="script_descargado.lua"))
+
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+
+    except Exception as e:
+        embed_err = discord.Embed(
+            title=":incorrect: Error",
+            description="Ocurrió un error al intentar acceder a la URL. Verifica que el enlace sea correcto y público.",
+            color=discord.Color.red()
+        )
+        await status_msg.edit(embed=embed_err)
+
+# ==================== COMANDO: .LURAPH (Archivos o Enlaces) ====================
+@bot.command(name="luraph")
+async def deobfuscate_luraph(ctx, url: str = None):
     input_filename = f"input_{ctx.author.id}.lua"
     output_filename = f"output_{ctx.author.id}.lua"
 
+    # Verificar si el usuario adjuntó un archivo O proporcionó una URL
+    has_attachment = bool(ctx.message.attachments)
+    
+    if not has_attachment and not url:
+        embed_err = discord.Embed(
+            title=":incorrect: Error",
+            description="El código no se pudo deobfuscar, por favor adjunta un archivo `.lua`/`.txt` o proporciona una URL válida de Pastefy/Pastebin.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed_err)
+        return
+
+    # Embed de Carga (Loading)
+    embed_loading = discord.Embed(
+        title=":loading: Deobfuscando",
+        description="Estamos Deobfuscando tu código, sé paciente.",
+        color=discord.Color.blue()
+    )
+    status_message = await ctx.send(embed=embed_loading)
+
     try:
-        # 1. Guardar archivo adjunto
-        await attachment.save(input_filename)
+        # CASO A: El usuario envió un archivo adjunto
+        if has_attachment:
+            attachment = ctx.message.attachments[0]
+            if not attachment.filename.lower().endswith((".txt", ".lua")):
+                await status_message.edit(embed=discord.Embed(title=":incorrect: Error", description="El archivo debe ser formato `.txt` o `.lua`.", color=discord.Color.red()))
+                return
+            if attachment.size > 5 * 1024 * 1024:
+                await status_message.edit(embed=discord.Embed(title=":incorrect: Error", description="El archivo es demasiado grande (Máx 5MB).", color=discord.Color.red()))
+                return
+            await attachment.save(input_filename)
 
-        # 2. Ejecutar la herramienta Node.js con un límite de tiempo de 30 segundos
+        # CASO B: El usuario envió una URL
+        elif url:
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=15) as response:
+                    if response.status != 200:
+                        await status_message.edit(embed=discord.Embed(title=":incorrect: Error", description="No se pudo descargar el contenido de la URL proporcionada.", color=discord.Color.red()))
+                        return
+                    script_content = await response.text()
+            
+            if not script_content.strip():
+                await status_message.edit(embed=discord.Embed(title=":incorrect: Error", description="La URL está vacía o no contiene texto válido.", color=discord.Color.red()))
+                return
+
+            with open(input_filename, "w", encoding="utf-8") as f:
+                f.write(script_content)
+
+        # 2. Ejecutar la herramienta Node.js de desofuscación
         cmd = ["node", "v15_tool_attempt_source/v15_tool_attempt_source/deob.js", input_filename, output_filename]
-        
-        process = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
 
-        # Verificar si hubo error o no se creó el archivo de salida
+        # Verificar si hubo fallo o no se generó el archivo de salida
         if process.returncode != 0 or not os.path.exists(output_filename):
             error_details = process.stderr.strip() or process.stdout.strip() or "Error desconocido en el script de Node.js."
             
-            # Enviar mensaje público de error
-            await status_message.edit(content="# :incorrect: Error\nEl código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.")
+            embed_err = discord.Embed(
+                title=":incorrect: Error",
+                description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+                color=discord.Color.red()
+            )
+            await status_message.edit(embed=embed_err)
             
-            # Enviar detalles por MD al usuario
             try:
                 await ctx.author.send(f"⚠️ **Detalle del fallo de desofuscación:**\n```{error_details[:1900]}```")
             except discord.Forbidden:
-                pass # Si el usuario tiene los MD cerrados
+                pass
             return
 
         # 3. Leer el resultado generado con éxito
         with open(output_filename, "r", encoding="utf-8", errors="ignore") as f:
             deobfuscated_code = f.read()
 
-        # Agregar la firma personalizada al inicio
+        # Agregar la firma personalizada de Lexy Hub al inicio
         final_content = f"-- Deobfuscado por Lexy Hub\n\n{deobfuscated_code}"
 
         final_filename = "deobfuscated_lexyhub.lua"
         with open(final_filename, "w", encoding="utf-8") as f:
             f.write(final_content)
 
-        # Editar mensaje con éxito y enviar archivo
-        await status_message.edit(content="# :correct: Deobfuscado\nTu código fue Deobfuscado correctamente.")
+        # Embed de Éxito (Correct)
+        embed_success = discord.Embed(
+            title=":correct: Deobfuscado",
+            description="Tu código fue Deobfuscado correctamente.",
+            color=discord.Color.green()
+        )
+        embed_success.set_footer(text="Lexy Hub Protection & Tools")
+
+        await status_message.edit(embed=embed_success)
         await ctx.send(file=discord.File(final_filename, filename="deobfuscated_lexyhub.lua"))
 
     except subprocess.TimeoutExpired:
-        await status_message.edit(content="# :incorrect: Error\nEl código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.")
+        embed_err = discord.Embed(
+            title=":incorrect: Error",
+            description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+            color=discord.Color.red()
+        )
+        await status_message.edit(embed=embed_err)
         try:
-            await ctx.author.send("⚠️ **Detalle del fallo:** El proceso tardó demasiado tiempo (Timeout de 30 segundos) y fue cancelado.")
+            await ctx.author.send("⚠️ **Detalle del fallo:** El proceso tardó demasiado tiempo (Timeout de 35 segundos) y fue cancelado.")
         except discord.Forbidden:
             pass
         
     except Exception as e:
-        await status_message.edit(content="# :incorrect: Error\nEl código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.")
+        embed_err = discord.Embed(
+            title=":incorrect: Error",
+            description="El código no se pudo deobfuscar, vuelve a intentar o verifica si el código es luraph.",
+            color=discord.Color.red()
+        )
+        await status_message.edit(embed=embed_err)
         try:
             await ctx.author.send(f"⚠️ **Detalle del error inesperado:**\n```{str(e)}```")
         except discord.Forbidden:
             pass
     
     finally:
-        # Limpieza de archivos temporales
+        # Limpieza segura de archivos temporales
         for temp_file in [input_filename, output_filename, "deobfuscated_lexyhub.lua"]:
             if os.path.exists(temp_file):
                 try:
@@ -106,6 +258,13 @@ async def deobfuscate_luraph(ctx):
                 except:
                     pass
 
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+
 TOKEN = os.getenv("DISCORD_TOKEN")
-if TOKEN:
+if not TOKEN:
+    print("❌ Error crítico: La variable de entorno DISCORD_TOKEN no está configurada.")
+else:
     bot.run(TOKEN)
