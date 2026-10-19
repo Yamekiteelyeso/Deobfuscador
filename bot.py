@@ -213,7 +213,7 @@ async def get_code_and_source(ctx, url=None):
     raise Exception("No encontré un archivo adjunto, un mensaje respondido con archivo ni una URL válida.")
 
 
-# ==================== DETECTOR DE OFUSCADORES ====================
+# ==================== DETECTOR DE OFUSCADORES CORREGIDO ====================
 @dataclass
 class Finding:
     family: str
@@ -223,129 +223,71 @@ class Finding:
     hint: str = ""
 
 
-FAMILY_LABEL = {
-    "luraph": "Luraph v15",
-    "prometheus": "Prometheus",
-    "moonsec": "MoonSec V3",
-    "goofy": "Goofyscator V11",
-    "ironbrew": "IronBrew 1",
-}
 CONFIDENT = 0.5
-
-LUR_TREE = re.compile(r"\b[A-Za-z_]\w*\s*<=\s*\d+\s+then\s+if\s+[A-Za-z_]\w*\s*<=\s*\d+\s+then")
-LUR_CONT = re.compile(r"\bcontinue\s*;")
-LUR_COLON = re.compile(r"\b[A-Za-z_]\w?:[A-Za-z_]\w?\(")
-LUR_SLOTS = re.compile(r"\[\d+\]\s*=\s*(?:bit32|buffer|string|table|math)\.\w+")
-LUR_START = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s+setmetatable\s*\(\s*\{")
-LUR_LOOP = re.compile(r"while\s+[A-Za-z_]\w*\s+do\s+if\s+[A-Za-z_]\w*\s*<=\s*\d+\s+then")
-LUR_HEADER = re.compile(r"Luraph Obfuscator v(\d+)\.(\d+)", re.I)
-
-MOON_PREFIX = re.compile(r"[\"']\\4\\8")
-MOON_CALL = re.compile(r"\(\s*\d+\s*,\s*[\"'](?:\\\d{1,3}){8,}")
-MOON_ESC = re.compile(r"(?:\\\d{1,3}){40,}")
-LOCAL_FUNC = re.compile(r"\blocal\s+function\b")
-
-GOOFY_START = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s*\{")
-WHILE_TRUE = re.compile(r"while\s+true\s+do")
-
-IB_PARAMS = re.compile(r"\breturn\s*\(\s*function\s*\(\s*(?:[A-Za-z_]\w*\s*,\s*){15,}")
-IB_NUMTABLE = re.compile(r"\blocal\s+[A-Za-z_]\w*\s*=\s*\{\s*-?\d+(?:\s*,\s*-?\d+){20,}")
-
-PROM_WRAP = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s*\(?\s*function\s*\(\s*\.\.\.\s*\)")
-PROM_SELECT = re.compile(r"select\s*\(\s*[\"']#[\"']\s*,\s*\.\.\.\s*\)")
-
 
 class Detector:
     @staticmethod
-    def _sample(code):
-        if len(code) <= 4_000_000:
-            return code
-        return code[:2_000_000] + "\n" + code[-2_000_000:]
-
-    @staticmethod
-    def _luraph(s):
-        score, ev, hint = 0.0, [], ""
-        tree = len(LUR_TREE.findall(s))
-        if tree >= 20:
-            score += 0.30; ev.append(f"árbol de despacho binario ({tree} niveles)")
-        elif tree >= 4:
-            score += 0.15; ev.append(f"árbol de despacho binario ({tree} niveles)")
-        cont = len(LUR_CONT.findall(s))
-        if cont >= 15:
-            score += 0.15; ev.append(f"`continue;` de Luau ({cont})")
-        slots = len(LUR_SLOTS.findall(s))
-        if slots >= 5:
-            score += 0.15; ev.append(f"tabla de funciones indexadas ({slots})")
-        if LUR_START.match(s[:3000]):
-            score += 0.25; ev.append("envoltorio setmetatable de VM")
-        if score >= 0.4:
-            m = LUR_HEADER.search(s[:1000])
-            if m and m.group(1) == "15":
-                hint = f"15.{m.group(2)}"
-        return min(score, 1.0), ev, hint
-
-    @staticmethod
-    def _moonsec(s):
-        score, ev = 0.0, []
-        if MOON_PREFIX.search(s):
-            score += 0.50; ev.append("constantes cifradas `\\4\\8`")
-        if MOON_CALL.search(s):
-            score += 0.15; ev.append("llamadas MoonSec")
-        return min(score, 1.0), ev
-
-    @staticmethod
-    def _goofy(s):
-        score, ev = 0.0, []
-        if "limitedstack" in s:
-            score += 0.40; ev.append("string interno limitedstack")
-        if "cannot change environment" in s:
-            score += 0.15; ev.append("mensaje de entorno")
-        return min(score, 1.0), ev
-
-    @staticmethod
-    def _ironbrew(s, tree):
-        score, ev = 0.0, []
-        if IB_PARAMS.search(s):
-            score += 0.50; ev.append("función con 15+ parámetros")
-        if IB_NUMTABLE.search(s):
-            score += 0.30; ev.append("tabla numérica de constantes")
-        return min(score, 1.0), ev
-
-    @staticmethod
-    def _prometheus(s):
-        score, ev = 0.0, []
-        marks = s[:4000].lower() + " " + s[-1500:].lower()
-        if "prometheus" in marks or "levno" in marks:
-            score += 0.75; ev.append("marca de agua Prometheus")
-        return min(score, 1.0), ev
-
-    @staticmethod
     def scan(code):
-        s = Detector._sample(code)
+        s = code[:500000]
         findings = []
 
-        l_score, l_ev, l_hint = Detector._luraph(s)
-        label = FAMILY_LABEL["luraph"]
-        if l_hint == "15.1":
+        # 1. Goofyscator V11
+        goofy_score = 0.0
+        goofy_ev = []
+        if "-- protected by goofyscator" in s.lower() or "limitedstack" in s:
+            goofy_score = 0.95
+            goofy_ev.append("Firma o string interno de Goofyscator V11")
+        findings.append(Finding("goofy", "Goofyscator V11", goofy_score, goofy_ev))
+
+        # 2. Prometheus
+        prom_score = 0.0
+        prom_ev = []
+        if "prometheus" in s.lower() or "levno" in s.lower():
+            prom_score = 0.95
+            prom_ev.append("Marca de agua de Prometheus")
+        findings.append(Finding("prometheus", "Prometheus", prom_score, prom_ev))
+
+        # 3. MoonSec V3
+        moon_score = 0.0
+        moon_ev = []
+        if re.search(r'[\"\']\\4\\8', s) or re.search(r'\(?["\'](?:\\\d{1,3}){10,}', s):
+            moon_score = 0.90
+            moon_ev.append("Constantes cifradas de MoonSec V3 (\\4\\8)")
+        findings.append(Finding("moonsec", "MoonSec V3", moon_score, moon_ev))
+
+        # 4. Luraph v15 / v15.1 (Estricto para evitar falsos positivos)
+        lur_score = 0.0
+        lur_ev = []
+        lur_hint = ""
+        
+        if re.search(r"Luraph Obfuscator", s, re.I):
+            lur_score += 0.80
+            lur_ev.append("Encabezado explícito de Luraph Obfuscator")
+        
+        tree_matches = len(re.findall(r"\b[A-Za-z_]\w*\s*<=\s*\d+\s+then\s+if\s+[A-Za-z_]\w*\s*<=\s*\d+\s+then", s))
+        if tree_matches >= 6:
+            lur_score += 0.40
+            lur_ev.append(f"Árbol de despacho binario complejo de Luraph ({tree_matches} niveles)")
+
+        lur_score = min(lur_score, 1.0)
+        m = re.search(r"Luraph Obfuscator v(\d+)\.(\d+)", s, re.I)
+        if m:
+            lur_hint = f"{m.group(1)}.{m.group(2)}"
+        
+        label = "Luraph v15"
+        if lur_hint == "15.1":
             label = "Luraph v15.1"
-        elif l_hint.startswith("15.0"):
+        elif lur_hint.startswith("15"):
             label = "Luraph v15"
-        elif l_score >= CONFIDENT:
-            label = "Luraph v15 / v15.1"
-        findings.append(Finding("luraph", label, l_score, l_ev, l_hint))
+        findings.append(Finding("luraph", label, lur_score, lur_ev, lur_hint))
 
-        m_score, m_ev = Detector._moonsec(s)
-        findings.append(Finding("moonsec", FAMILY_LABEL["moonsec"], m_score, m_ev))
-
-        g_score, g_ev = Detector._goofy(s)
-        findings.append(Finding("goofy", FAMILY_LABEL["goofy"], g_score, g_ev))
-
-        tree = len(LUR_TREE.findall(s))
-        i_score, i_ev = Detector._ironbrew(s, tree)
-        findings.append(Finding("ironbrew", FAMILY_LABEL["ironbrew"], i_score, i_ev))
-
-        p_score, p_ev = Detector._prometheus(s)
-        findings.append(Finding("prometheus", FAMILY_LABEL["prometheus"], p_score, p_ev))
+        # 5. IronBrew 1
+        ib_score = 0.0
+        ib_ev = []
+        if re.search(r"\breturn\s*\(\s*function\s*\(\s*(?:[A-Za-z_]\w*\s*,\s*){15,}", s):
+            ib_score = 0.90
+            ib_ev.append("Función envoltorio con más de 15 parámetros (IronBrew)")
+        findings.append(Finding("ironbrew", "IronBrew 1", ib_score, ib_ev))
 
         findings.sort(key=lambda f: f.score, reverse=True)
         return findings
@@ -965,20 +907,33 @@ async def cmd_detect(ctx, url: str = None):
         top = findings[0]
         
         confidence_pct = int(top.score * 100)
-        version_str = "15.0"
-        if "15.1" in top.label:
-            version_str = "15.1"
-        elif "v15" in top.label:
+        
+        if confidence_pct < 40:
+            # Si no coincide con ninguno con suficiente certeza
+            detect_text = (
+                f"# {EMOJI_ERROR} UNKNOWN SCRIPT\n"
+                f"Name: Desconocido / Sin ofuscador reconocido\n"
+                f"Version: N/A\n"
+                f"Confidence: {confidence_pct}%\n\n"
+                f"Detected Link: {source_link}"
+            )
+            embed = discord.Embed(description=detect_text, color=discord.Color.red())
+        else:
             version_str = "15.0"
+            if "15.1" in top.label:
+                version_str = "15.1"
+            elif "v15" in top.label:
+                version_str = "15.0"
+                
+            detect_text = (
+                f"# {EMOJI_CORRECT} DETECTED {top.label.upper()}\n"
+                f"Name: {top.label}\n"
+                f"Version: {version_str}\n"
+                f"Confidence: {confidence_pct}%\n\n"
+                f"Detected Link: {source_link}"
+            )
+            embed = discord.Embed(description=detect_text, color=discord.Color.from_rgb(0, 204, 102))
             
-        detect_text = (
-            f"# {EMOJI_CORRECT} DETECTED {top.label.upper()}\n"
-            f"Name: {top.label}\n"
-            f"Version: {version_str}\n"
-            f"Confidence: {confidence_pct}%\n\n"
-            f"Detected Link: {source_link}"
-        )
-        embed = discord.Embed(description=detect_text, color=discord.Color.from_rgb(0, 204, 102))
         await safe_edit(msg, embed)
     except Exception as e:
         logger.error(f"Error en .detect: {e}", exc_info=True)
