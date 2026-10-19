@@ -98,7 +98,6 @@ extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_ENGINES, GOOFY_DIR)
 
-# Crear la carpeta output obligatoria que exige deob.js
 os.makedirs("output", exist_ok=True)
 
 # 2. Aplicar permisos de ejecución a binarios necesarios
@@ -406,17 +405,23 @@ async def engine_luraph151(code, uid, timeout):
     if not tool:
         raise MissingDependency(f"archivos de `{LURAPH_ZIP}`")
 
-    input_file = f"input_{uid}.lua"
-    output_file = f"output_{uid}.lua"
-    expected_path = os.path.join("output", input_file)
-    json_path = None
+    tool_dir = os.path.dirname(tool)
+    input_file = os.path.abspath(f"input_{uid}.lua")
+    output_file = os.path.abspath(f"output_{uid}.lua")
+    
     try:
         with open(input_file, "w", encoding="utf-8") as f:
             f.write(code)
         deadline = asyncio.get_running_loop().time() + timeout
-        stdout, _ = await run_stage([node_bin, tool, input_file, output_file], deadline, "Luraph v15/v15.1", check=False)
+        stdout, stderr = await run_stage(
+            [node_bin, os.path.basename(tool), input_file, output_file],
+            deadline, "Luraph v15/v15.1", cwd=tool_dir, check=False
+        )
 
         raw_out = stdout.decode("utf-8", "replace").strip()
+        err_out = stderr.decode("utf-8", "replace").strip()
+        
+        json_path = None
         try:
             js = json.loads(raw_out[raw_out.find("{"):raw_out.rfind("}") + 1])
             if js.get("success"):
@@ -425,16 +430,19 @@ async def engine_luraph151(code, uid, timeout):
             pass
 
         result_code = ""
-        for candidate in (json_path, expected_path, output_file):
+        for candidate in (json_path, output_file):
             if candidate and os.path.exists(candidate):
                 with open(candidate, "r", encoding="utf-8", errors="ignore") as f:
                     result_code = f.read()
                 break
+                
         if not result_code.strip():
-            raise DeobfError("El motor no produjo salida.")
+            detail = err_out or raw_out or "sin detalles de Node.js"
+            raise DeobfError(f"Luraph falló: {detail[-400:]}")
+            
         return LuauOptimizer.beautify(result_code)
     finally:
-        _remove(input_file, output_file, json_path, expected_path)
+        _remove(input_file, output_file)
 
 
 async def engine_prometheus(code, uid, timeout):
