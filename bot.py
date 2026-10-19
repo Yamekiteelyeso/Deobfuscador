@@ -93,25 +93,25 @@ def make_all_binaries_executable():
                     logger.error(f"No se pudo dar permisos a {p}: {e}")
 
 
-# 1. Descomprimir herramientas iniciales
+# 1. Descomprimir herramientas iniciales (Corregido el destino de luraphv15.zip para evitar duplicar carpetas)
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_DIR)
-extract_zip(LURAPH15_ZIP, LURAPH15_DIR)
+extract_zip(LURAPH15_ZIP, LURAPH15_BIN, ".")  # Extrae directamente manteniendo la ruta limpia
 
-# 2. Si faltan los binarios de Luraph 15, ejecutar el script de compilación interno (build_luau.py)[span_2](start_span)[span_2](end_span)
+# 2. Si faltan los binarios de Luraph 15, ejecutar el script de compilación interno
 luau_bin_path = os.path.join(LURAPH15_BIN, "luau")
 luau_ast_path = os.path.join(LURAPH15_BIN, "luau-ast")
 
 if not (os.path.isfile(luau_bin_path) and os.path.isfile(luau_ast_path)):
     if os.path.isfile(LURAPH15_BUILD):
-        logger.info("Binarios de Luraph 15 no encontrados. Ejecutando build_luau.py[span_3](start_span)[span_3](end_span)...")
+        logger.info("Binarios de Luraph 15 no encontrados. Ejecutando build_luau.py...")
         try:
-            subprocess.run([sys.executable, LURAPH15_BUILD], cwd=os.path.dirname(LURAPH15_BUILD), check=True)
-            logger.info("build_luau.py[span_4](start_span)[span_4](end_span) ejecutado correctamente.")
+            subprocess.run([sys.executable, os.path.basename(LURAPH15_BUILD)], cwd=os.path.dirname(LURAPH15_BUILD), check=True)
+            logger.info("build_luau.py ejecutado correctamente.")
         except Exception as e:
-            logger.error(f"Error al ejecutar build_luau.py[span_5](start_span)[span_5](end_span): {e}")
+            logger.error(f"Error al ejecutar build_luau.py: {e}")
 
 # 3. Otorgar permisos de ejecución a todos los binarios encontrados de manera recursiva
 make_all_binaries_executable()
