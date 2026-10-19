@@ -11,6 +11,7 @@ import logging
 import asyncio
 import aiohttp
 import discord
+import subprocess
 from collections import deque
 from dataclasses import dataclass, field
 from discord.ext import commands
@@ -25,23 +26,26 @@ logger = logging.getLogger("LexyHubBot")
 
 # ==================== EMOJIS ====================
 EMOJI_LOADING = "<a:loading:1561435149793493166>"
-EMOJI_CORRECT = "<:correct:1561435171385909288>"
+EMOJI_CORRECT = "<:correct:1561510204393136209>"
 EMOJI_ERROR = "<:error:1561510204393136209>"
+EMOJI_LIST = "<:list:1561778149514149888>"
+EMOJI_LURAPH = "<:luraph:1561779566635126845>"
+EMOJI_PROMETHEUS = "<:prometheus:1561782588022984774>"
 
-# ==================== CONFIGURACIÓN (se puede cambiar con variables de entorno) ====================
+# ==================== CONFIGURACIÓN ====================
 def _env_int(name, default):
     try:
         return int(os.getenv(name, default))
     except (TypeError, ValueError):
         return default
 
-MAX_CONCURRENT_JOBS = max(1, _env_int("MAX_CONCURRENT_JOBS", 2))   # desofuscaciones a la vez
-MAX_WAITING_JOBS = max(1, _env_int("MAX_WAITING_JOBS", 15))        # máximo de personas esperando
-MAX_INPUT_BYTES = _env_int("MAX_INPUT_MB", 8) * 1024 * 1024        # tamaño máximo del script
-HARD_JOB_TIMEOUT = 720                                             # tope absoluto por trabajo (s)
+MAX_CONCURRENT_JOBS = max(1, _env_int("MAX_CONCURRENT_JOBS", 2))
+MAX_WAITING_JOBS = max(1, _env_int("MAX_WAITING_JOBS", 15))
+MAX_INPUT_BYTES = _env_int("MAX_INPUT_MB", 8) * 1024 * 1024
+HARD_JOB_TIMEOUT = 720
 
-# ==================== HERRAMIENTAS (zips que se descomprimen solos) ====================
-LURAPH_ZIP = "luraphv15_1_deobf.zip"          # motor de Luraph v15.1
+# ==================== HERRAMIENTAS Y ZIPS ====================
+LURAPH_ZIP = "luraphv15_1_deobf.zip"
 LURAPH_DIR = "v15_tool_attempt_source"
 
 PROM_ZIP = "Prometheus-Deobfuscator-main.zip"
@@ -52,20 +56,13 @@ MOON_DIR = "moonsec-v3"
 MOON_DLL = os.path.join(MOON_DIR, "bin", "Release", "net9.0", "MoonsecDeobfuscator.dll")
 MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
-LURAPH15_ZIP = "luraphv15.zip"                # motor de Luraph v15
-LURAPH15_DIR = "Deobfuscator"
-LURAPH15_BIN = os.path.join(LURAPH15_DIR, "deobf", "bin")
-LURAPH15_SCRIPT = os.path.join(LURAPH15_DIR, "deobf", "deob.py")
-
 GOOFY_ZIP = "goofyscator-deobf.zip"
 GOOFY_DIR = "goofyscator-deobf"
 GOOFY_ENGINES = os.path.join(GOOFY_DIR, "engines")
-GOOFY_BIN = os.path.join(GOOFY_ENGINES, "deobfuscator", "deobf", "bin")
 GOOFY_BANNER = re.compile(r"^--[^\n]*protected by goofyscator V11 BETA-1\b", re.I)
 
 
 def extract_zip(zip_path, marker_dir, target="."):
-    """Descomprime zip_path en target si todavía no existe marker_dir."""
     if os.path.exists(zip_path) and not os.path.exists(marker_dir):
         logger.info(f"Descomprimiendo {zip_path}...")
         try:
@@ -76,27 +73,37 @@ def extract_zip(zip_path, marker_dir, target="."):
             logger.error(f"Error al descomprimir {zip_path}: {e}")
 
 
-def chmod_exec(folder, names):
-    """extractall() no conserva el permiso de ejecución de los binarios."""
-    for name in names:
-        p = os.path.join(folder, name)
-        if os.path.isfile(p):
-            try:
-                os.chmod(p, 0o755)
-            except Exception as e:
-                logger.error(f"No se pudo dar permisos a {p}: {e}")
+def find_file_recursively(filename):
+    for root, dirs, files in os.walk("."):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
 
 
+def make_all_binaries_executable():
+    binarios_necesarios = {"luau", "luau-ast"}
+    for root, dirs, files in os.walk("."):
+        for file in files:
+            if file in binarios_necesarios:
+                p = os.path.join(root, file)
+                try:
+                    os.chmod(p, 0o755)
+                except Exception:
+                    pass
+
+
+# 1. Descomprimir herramientas limpias
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
-extract_zip(GOOFY_ZIP, GOOFY_DIR)
-extract_zip(LURAPH15_ZIP, LURAPH15_DIR)
+extract_zip(GOOFY_ZIP, GOOFY_ENGINES, GOOFY_DIR)
 
-chmod_exec(LURAPH15_BIN, ("luau", "luau-ast"))
+os.makedirs("output", exist_ok=True)
+
+# 2. Aplicar permisos de ejecución a binarios necesarios
+make_all_binaries_executable()
+
 if os.path.isdir(GOOFY_ENGINES):
-    chmod_exec(GOOFY_BIN, ("luau", "luau-ast"))
-    # El zip no trae package.json: sin "type": "module" los .ts/.mjs no resuelven sus imports.
     try:
         _pkg = os.path.join(GOOFY_ENGINES, "package.json")
         if not os.path.exists(_pkg):
@@ -105,12 +112,12 @@ if os.path.isdir(GOOFY_ENGINES):
     except Exception as e:
         logger.error(f"Error preparando Goofyscator: {e}")
 
-# ==================== BOT ====================
+# ==================== BOT SETUP ====================
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
-EMBED_BLACK = discord.Color.from_rgb(1, 1, 1)   # 0x000000 se ve como "sin color"; 0x010101 pinta negro
+EMBED_BLACK = discord.Color.from_rgb(1, 1, 1)
 
 
 @bot.event
@@ -128,7 +135,7 @@ async def on_command_error(ctx, error):
     logger.error(f"Error en comando {getattr(ctx.command, 'name', '?')}: {error}")
 
 
-# ==================== UI: textos principales GRANDES (encabezado # en el embed) ====================
+# ==================== UTILIDADES UI ====================
 def _desc(emoji, head, body=""):
     text = f"# {emoji} {head}"
     if body:
@@ -164,7 +171,6 @@ def format_size(size_bytes):
 
 
 def make_preview(text, max_lines=8, max_line_len=110, max_total=900):
-    """Vista previa segura: las líneas minificadas pueden medir MB y romper el límite del embed."""
     lines = text.splitlines()
     out = []
     for line in lines[:max_lines]:
@@ -177,20 +183,17 @@ def make_preview(text, max_lines=8, max_line_len=110, max_total=900):
     return preview.replace("```", "'''")
 
 
-# ==================== OBTENER ARCHIVO / URL ====================
+# ==================== OBTENCIÓN DE CÓDIGO ====================
 async def get_code_and_source(ctx, url=None):
-    """Devuelve (código, enlace_origen, tamaño). Lanza Exception con mensaje claro si falla."""
     async def from_attachment(att):
         if att.size > MAX_INPUT_BYTES:
             raise Exception(f"El archivo pesa {format_size(att.size)} y el máximo es {format_size(MAX_INPUT_BYTES)}.")
         data = await att.read()
         return data.decode("utf-8-sig", errors="ignore"), att.url, att.size
 
-    # 1. Adjunto en el mensaje actual
     if ctx.message.attachments:
         return await from_attachment(ctx.message.attachments[0])
 
-    # 2. Respondiendo a un mensaje con adjunto
     if ctx.message.reference and ctx.message.reference.message_id:
         try:
             ref_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
@@ -201,7 +204,6 @@ async def get_code_and_source(ctx, url=None):
                 raise
             logger.warning(f"No se pudo leer el mensaje respondido: {e}")
 
-    # 3. URL
     if url:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -218,7 +220,7 @@ async def get_code_and_source(ctx, url=None):
     raise Exception("No encontré un archivo adjunto, un mensaje respondido con archivo ni una URL válida.")
 
 
-# ==================== DETECTOR: lee la ESTRUCTURA del código (no firmas ni banners) ====================
+# ==================== DETECTOR DE OFUSCADORES ====================
 @dataclass
 class Finding:
     family: str
@@ -228,170 +230,83 @@ class Finding:
     hint: str = ""
 
 
-FAMILY_LABEL = {
-    "luraph": "Luraph v15",
-    "prometheus": "Prometheus",
-    "moonsec": "MoonSec V3",
-    "goofy": "Goofyscator V11",
-    "ironbrew": "IronBrew 1",
-}
-CONFIDENT = 0.5   # a partir de aquí se considera identificado
-
-# Luraph v15: VM con árbol de despacho binario, `continue` de Luau, métodos de 1-2 letras (K:A(...))
-LUR_TREE = re.compile(r"\b[A-Za-z_]\w*\s*<=\s*\d+\s+then\s+if\s+[A-Za-z_]\w*\s*<=\s*\d+\s+then")
-LUR_CONT = re.compile(r"\bcontinue\s*;")
-LUR_COLON = re.compile(r"\b[A-Za-z_]\w?:[A-Za-z_]\w?\(")
-LUR_SLOTS = re.compile(r"\[\d+\]\s*=\s*(?:bit32|buffer|string|table|math)\.\w+")
-LUR_START = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s+setmetatable\s*\(\s*\{")
-LUR_LOOP = re.compile(r"while\s+[A-Za-z_]\w*\s+do\s+if\s+[A-Za-z_]\w*\s*<=\s*\d+\s+then")
-LUR_HEADER = re.compile(r"Luraph Obfuscator v(\d+)\.(\d+)", re.I)   # solo para elegir v15 / v15.1
-
-# MoonSec V3: constantes cifradas con prefijo \4\8 y llamadas f(clave,"\52\55...")
-MOON_PREFIX = re.compile(r"[\"']\\4\\8")
-MOON_CALL = re.compile(r"\(\s*\d+\s*,\s*[\"'](?:\\\d{1,3}){8,}")
-MOON_ESC = re.compile(r"(?:\\\d{1,3}){40,}")
-LOCAL_FUNC = re.compile(r"\blocal\s+function\b")
-
-# Goofyscator V11: tabla envoltorio con constructor de handlers y strings internos de su runtime
-GOOFY_START = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s*\{")
-WHILE_TRUE = re.compile(r"while\s+true\s+do")
-
-# IronBrew 1: función con decenas de parámetros y tabla numérica enorme
-IB_PARAMS = re.compile(r"\breturn\s*\(\s*function\s*\(\s*(?:[A-Za-z_]\w*\s*,\s*){15,}")
-IB_NUMTABLE = re.compile(r"\blocal\s+[A-Za-z_]\w*\s*=\s*\{\s*-?\d+(?:\s*,\s*-?\d+){20,}")
-
-# Prometheus
-PROM_WRAP = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s*\(?\s*function\s*\(\s*\.\.\.\s*\)")
-PROM_SELECT = re.compile(r"select\s*\(\s*[\"']#[\"']\s*,\s*\.\.\.\s*\)")
-
+CONFIDENT = 0.5
 
 class Detector:
     @staticmethod
-    def _sample(code):
-        if len(code) <= 4_000_000:
-            return code
-        return code[:2_000_000] + "\n" + code[-2_000_000:]
-
-    @staticmethod
-    def _luraph(s):
-        score, ev, hint = 0.0, [], ""
-        tree = len(LUR_TREE.findall(s))
-        if tree >= 20:
-            score += 0.30; ev.append(f"árbol de despacho binario de la VM ({tree} niveles)")
-        elif tree >= 4:
-            score += 0.15; ev.append(f"árbol de despacho binario ({tree} niveles)")
-        cont = len(LUR_CONT.findall(s))
-        if cont >= 15:
-            score += 0.15; ev.append(f"`continue;` de Luau en los handlers ({cont})")
-        slots = len(LUR_SLOTS.findall(s))
-        if slots >= 5:
-            score += 0.15; ev.append(f"tabla de funciones de librería indexadas ({slots})")
-        colon = len(LUR_COLON.findall(s))
-        if colon >= 100:
-            score += 0.10; ev.append(f"llamadas de método de 1-2 letras ({colon})")
-        if LUR_START.match(s[:3000]):
-            score += 0.25; ev.append("`return setmetatable({...` como envoltorio de la VM")
-        if LUR_LOOP.search(s):
-            score += 0.10; ev.append("bucle `while ... do if op<=N` de la VM")
-        if score >= 0.4:
-            m = LUR_HEADER.search(s[:1000])
-            if m and m.group(1) == "15":
-                hint = f"15.{m.group(2)}"   # la versión no se distingue por estructura: solo si el encabezado sigue ahí
-        return min(score, 1.0), ev, hint
-
-    @staticmethod
-    def _moonsec(s):
-        score, ev = 0.0, []
-        if MOON_PREFIX.search(s):
-            score += 0.50; ev.append("constantes cifradas con prefijo `\\4\\8`")
-        if MOON_CALL.search(s):
-            score += 0.15; ev.append("llamadas f(clave, \"\\52\\55...\") de MoonSec")
-        if MOON_ESC.search(s):
-            score += 0.15; ev.append("cadenas largas de escapes decimales")
-        if len(LOCAL_FUNC.findall(s[:80000])) >= 12:
-            score += 0.10; ev.append("12+ funciones locales (layout de la VM de MoonSec)")
-        return min(score, 1.0), ev
-
-    @staticmethod
-    def _goofy(s):
-        score, ev = 0.0, []
-        if "limitedstack" in s:
-            score += 0.40; ev.append("string interno `limitedstack` del runtime")
-        if "cannot change environment" in s:
-            score += 0.15; ev.append("mensaje `cannot change environment`")
-        if ("__newindex" in s and "__pairs" in s) or ('"newindex"' in s and '"pairs"' in s):
-            score += 0.20; ev.append("constructor de handlers con `__pairs`/`__newindex`")
-        if "stack overflow" in s and WHILE_TRUE.search(s):
-            score += 0.10; ev.append("runner con `stack overflow` + `while true`")
-        if GOOFY_START.match(s[:3000]):
-            score += 0.15; ev.append("tabla envoltorio `return {...}`")
-        return min(score, 1.0), ev
-
-    @staticmethod
-    def _ironbrew(s, tree):
-        score, ev = 0.0, []
-        if IB_PARAMS.search(s):
-            score += 0.50; ev.append("función con 15+ parámetros (`return(function(a,b,c,...`)")
-        if IB_NUMTABLE.search(s):
-            score += 0.30; ev.append("tabla numérica enorme de constantes")
-        if tree >= 20:
-            score += 0.10; ev.append("árbol de despacho binario")
-        return min(score, 1.0), ev
-
-    @staticmethod
-    def _prometheus(s):
-        score, ev = 0.0, []
-        marks = s[:4000].lower() + " " + s[-1500:].lower()
-        if "prometheus" in marks or "levno" in marks:
-            score += 0.75; ev.append("marca de agua de Prometheus en el script")
-        # Sin marca de agua, solo hay pistas débiles (nunca llegan al umbral por sí solas).
-        if PROM_WRAP.match(s[:3000]):
-            score += 0.15; ev.append("envoltorio `return(function(...)`")
-        if len(PROM_SELECT.findall(s)) >= 2:
-            score += 0.10; ev.append("uso repetido de `select('#', ...)`")
-        if "prometheus" not in marks and "levno" not in marks:
-            score = min(score, 0.35)
-        return min(score, 1.0), ev
-
-    @staticmethod
     def scan(code):
-        """Devuelve la lista de Finding ordenada por puntaje (mayor primero)."""
-        s = Detector._sample(code)
+        s = code[:500000]
         findings = []
 
-        l_score, l_ev, l_hint = Detector._luraph(s)
-        label = FAMILY_LABEL["luraph"]
-        if l_hint == "15.1":
-            label = "Luraph v15.1"
-        elif l_hint.startswith("15.0"):
+        # 1. Goofyscator V11
+        goofy_score = 0.0
+        goofy_ev = []
+        if "-- protected by goofyscator" in s.lower() or "limitedstack" in s:
+            goofy_score = 0.95
+            goofy_ev.append("Firma o string interno de Goofyscator V11")
+        findings.append(Finding("goofy", "Goofyscator V11", goofy_score, goofy_ev))
+
+        # 2. Prometheus
+        prom_score = 0.0
+        prom_ev = []
+        if "prometheus" in s.lower() or "levno" in s.lower():
+            prom_score = 0.95
+            prom_ev.append("Marca de agua de Prometheus")
+        findings.append(Finding("prometheus", "Prometheus", prom_score, prom_ev))
+
+        # 3. MoonSec V3
+        moon_score = 0.0
+        moon_ev = []
+        if re.search(r'[\"\']\\4\\8', s) or re.search(r'\(?["\'](?:\\\d{1,3}){10,}', s):
+            moon_score = 0.90
+            moon_ev.append("Constantes cifradas de MoonSec V3 (\\4\\8)")
+        findings.append(Finding("moonsec", "MoonSec V3", moon_score, moon_ev))
+
+        # 4. Luraph v15 / v15.1
+        lur_score = 0.0
+        lur_ev = []
+        lur_hint = ""
+        
+        if re.search(r"Luraph Obfuscator", s, re.I):
+            lur_score += 0.80
+            lur_ev.append("Encabezado explícito de Luraph Obfuscator")
+        
+        tree_matches = len(re.findall(r"\b[A-Za-z_]\w*\s*<=\s*\d+\s+then\s+if\s+[A-Za-z_]\w*\s*<=\s*\d+\s+then", s))
+        if tree_matches >= 6:
+            lur_score += 0.40
+            lur_ev.append(f"Árbol de despacho binario complejo de Luraph ({tree_matches} niveles)")
+
+        lur_score = min(lur_score, 1.0)
+        m = re.search(r"Luraph Obfuscator v(\d+)\.(\d+)", s, re.I)
+        if m:
+            lur_hint = f"{m.group(1)}.{m.group(2)}"
+        
+        label = "Luraph v15.1"
+        if lur_hint == "15.0":
             label = "Luraph v15"
-        elif l_score >= CONFIDENT:
-            label = "Luraph v15 / v15.1"
-        findings.append(Finding("luraph", label, l_score, l_ev, l_hint))
+        elif lur_hint == "15.1":
+            label = "Luraph v15.1"
+            
+        findings.append(Finding("luraph", label, lur_score, lur_ev, lur_hint))
 
-        m_score, m_ev = Detector._moonsec(s)
-        findings.append(Finding("moonsec", FAMILY_LABEL["moonsec"], m_score, m_ev))
-
-        g_score, g_ev = Detector._goofy(s)
-        findings.append(Finding("goofy", FAMILY_LABEL["goofy"], g_score, g_ev))
-
-        tree = len(LUR_TREE.findall(s))
-        i_score, i_ev = Detector._ironbrew(s, tree)
-        findings.append(Finding("ironbrew", FAMILY_LABEL["ironbrew"], i_score, i_ev))
-
-        p_score, p_ev = Detector._prometheus(s)
-        findings.append(Finding("prometheus", FAMILY_LABEL["prometheus"], p_score, p_ev))
+        # 5. IronBrew 1
+        ib_score = 0.0
+        ib_ev = []
+        if re.search(r"\breturn\s*\(\s*function\s*\(\s*(?:[A-Za-z_]\w*\s*,\s*){15,}", s):
+            ib_score = 0.90
+            ib_ev.append("Función envoltorio con más de 15 parámetros (IronBrew)")
+        findings.append(Finding("ironbrew", "IronBrew 1", ib_score, ib_ev))
 
         findings.sort(key=lambda f: f.score, reverse=True)
         return findings
 
 
-# ==================== FORMATEO / LIMPIEZA ====================
+# ==================== OPTIMIZADOR / BEAUTIFIER ====================
 class LuauOptimizer:
     @staticmethod
     def deep_clean_and_fix(code):
         fixed_code = code.replace("if nil == 1 then", "if 1 == 1 then").replace("elseif nil == 2 then", "elseif 1 == 2 then")
-        fixed_code = re.sub(r'local function\s+fn\d+\s*\(\s*\)\s*end', '-- [Función vacía removida automáticamente]', fixed_code)
+        fixed_code = re.sub(r'local function\s+fn\d+\s*\(\s*\)\s*end', '-- [Función vacía removida]', fixed_code)
         cleaned = []
         for line in fixed_code.splitlines():
             if "devirt:" in line or 'error("devirt:' in line or "LPH:" in line or "Prometheus" in line:
@@ -429,9 +344,8 @@ class LuauOptimizer:
         return "\n".join(formatted)
 
 
-# ==================== MOTORES (devuelven el código o lanzan DeobfError) ====================
+# ==================== MOTORES DE DESOFUSCACIÓN ====================
 class DeobfError(Exception):
-    """La herramienta no pudo desofuscar el script (mensaje corto para el usuario)."""
     head = "Fallo"
 
 
@@ -440,7 +354,6 @@ class MissingDependency(DeobfError):
 
 
 async def run_stage(args, deadline, label, cwd=None, check=True):
-    """Ejecuta un subproceso respetando un tiempo límite compartido (mata todo el grupo si se pasa)."""
     proc = await asyncio.create_subprocess_exec(
         *[str(a) for a in args],
         cwd=cwd,
@@ -463,7 +376,7 @@ async def run_stage(args, deadline, label, cwd=None, check=True):
         raise DeobfError(f"{label}: tiempo agotado")
     if check and proc.returncode:
         diag = (stderr or stdout).decode("utf-8", "replace").strip()
-        raise DeobfError(f"{label} falló: {diag[-600:]}")   # la causa suele estar al final
+        raise DeobfError(f"{label} falló: {diag[-600:]}")
     return stdout, stderr
 
 
@@ -485,75 +398,114 @@ def _node():
 
 
 async def engine_luraph151(code, uid, timeout):
-    tool = os.path.join(LURAPH_DIR, "v15_tool_attempt_source", "deob.js")
+    tool = find_file_recursively("deob.js")
     node_bin = _node()
     if not node_bin:
         raise MissingDependency("Node.js (`node`)")
-    if not os.path.isfile(tool):
-        raise MissingDependency(f"archivos de `{LURAPH_ZIP}` (¿está junto al bot?)")
+    if not tool:
+        raise MissingDependency("archivos de Luraph v15/v15.1")
 
-    input_file = f"input_{uid}.lua"
-    output_file = f"output_{uid}.lua"
-    expected_path = os.path.join("output", input_file)
-    json_path = None
+    tool_dir = os.path.dirname(tool)
+    input_file = os.path.abspath(f"input_{uid}.lua")
+    output_file = os.path.abspath(f"output_{uid}.lua")
+    
     try:
         with open(input_file, "w", encoding="utf-8") as f:
             f.write(code)
+        
         deadline = asyncio.get_running_loop().time() + timeout
-        stdout, _ = await run_stage([node_bin, tool, input_file, output_file], deadline, "Luraph v15.1", check=False)
+        stdout, stderr = await run_stage(
+            [node_bin, os.path.basename(tool), input_file, output_file],
+            deadline, "Luraph v15/v15.1", cwd=tool_dir, check=False
+        )
 
         raw_out = stdout.decode("utf-8", "replace").strip()
+        err_out = stderr.decode("utf-8", "replace").strip()
+        
+        json_path = None
         try:
-            js = json.loads(raw_out[raw_out.find("{"):raw_out.rfind("}") + 1])
-            if js.get("success"):
-                json_path = js.get("output")
+            start_idx = raw_out.find("{")
+            end_idx = raw_out.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                js = json.loads(raw_out[start_idx:end_idx + 1])
+                if js.get("success"):
+                    json_path = js.get("output")
         except Exception:
             pass
 
         result_code = ""
-        for candidate in (json_path, expected_path, output_file):
+        candidates = [
+            json_path,
+            output_file,
+            os.path.join(tool_dir, "output", os.path.basename(input_file)),
+            os.path.join("output", os.path.basename(input_file)),
+            os.path.join(tool_dir, f"output_{uid}.lua")
+        ]
+
+        for candidate in candidates:
             if candidate and os.path.exists(candidate):
                 with open(candidate, "r", encoding="utf-8", errors="ignore") as f:
                     result_code = f.read()
-                break
+                if result_code.strip():
+                    break
+                
         if not result_code.strip():
-            raise DeobfError("El motor no produjo salida (protecciones pesadas o no es Luraph v15.1).")
-        return LuauOptimizer.beautify(result_code)
-    finally:
-        _remove(input_file, output_file, json_path, expected_path)
-
-
-async def engine_prometheus(code, uid, timeout):
-    tool = os.path.join(PROM_DIR, "bin", "pdeobf.js")
-    node_bin = _node()
-    if not node_bin:
-        raise MissingDependency("Node.js (`node`)")
-    if not os.path.isfile(tool):
-        raise MissingDependency(f"archivos de `{PROM_ZIP}` (¿está junto al bot?)")
-
-    input_file = f"prom_input_{uid}.lua"
-    output_file = f"prom_output_{uid}.lua"
-    try:
-        with open(input_file, "w", encoding="utf-8") as f:
-            f.write(code)
-        deadline = asyncio.get_running_loop().time() + timeout
-        stdout, stderr = await run_stage([node_bin, tool, input_file, output_file], deadline, "Prometheus", check=False)
-
-        result_code = ""
-        if os.path.exists(output_file):
-            with open(output_file, "r", encoding="utf-8", errors="ignore") as f:
-                result_code = f.read()
-        elif stdout.strip():
-            result_code = stdout.decode("utf-8", "replace").strip()
-        if not result_code.strip():
-            detail = (stderr or stdout).decode("utf-8", "replace").strip() or "sin detalles"
-            raise DeobfError(f"El motor no produjo salida: {detail[-200:]}")
+            detail = err_out or raw_out or "El motor no produjo salida."
+            raise DeobfError(f"Luraph falló: {detail[-400:]}")
+            
         return LuauOptimizer.beautify(result_code)
     finally:
         _remove(input_file, output_file)
 
 
-async def engine_moonveil(code, uid, timeout):
+async def engine_prometheus(code, uid, timeout):
+    tool = find_file_recursively("pdeobf.js")
+    node_bin = _node()
+    if not node_bin:
+        raise MissingDependency("Node.js (`node`)")
+    if not tool:
+        raise MissingDependency("archivos de Prometheus")
+
+    tool_dir = os.path.dirname(tool)
+    input_file = os.path.abspath(f"prom_input_{uid}.lua")
+    output_file = os.path.abspath(f"prom_output_{uid}.lua")
+    
+    try:
+        with open(input_file, "w", encoding="utf-8") as f:
+            f.write(code)
+        
+        deadline = asyncio.get_running_loop().time() + timeout
+        stdout, stderr = await run_stage(
+            [node_bin, os.path.basename(tool), input_file, output_file],
+            deadline, "Prometheus", cwd=tool_dir, check=False
+        )
+
+        result_code = ""
+        candidates = [
+            output_file,
+            os.path.join(tool_dir, os.path.basename(output_file)),
+            os.path.join(tool_dir, f"prom_output_{uid}.lua")
+        ]
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                with open(candidate, "r", encoding="utf-8", errors="ignore") as f:
+                    result_code = f.read()
+                if result_code.strip():
+                    break
+        
+        if not result_code.strip() and stdout.strip():
+            result_code = stdout.decode("utf-8", "replace").strip()
+
+        if not result_code.strip():
+            detail = (stderr or stdout).decode("utf-8", "replace").strip() or "sin detalles"
+            raise DeobfError(f"Prometheus falló: {detail[-300:]}")
+
+        return LuauOptimizer.beautify(result_code)
+    finally:
+        _remove(input_file, output_file)
+
+
+async def engine_moonsec(code, uid, timeout):
     dotnet_bin = shutil.which("dotnet") or os.path.expanduser("~/.dotnet/dotnet")
     java_bin = os.getenv("MOONSEC_JAVA") or shutil.which("java")
     missing = []
@@ -562,7 +514,7 @@ async def engine_moonveil(code, uid, timeout):
     if not java_bin:
         missing.append("Java 8+ (`java`)")
     if not os.path.isfile(MOON_DLL) or not os.path.isfile(MOON_JAR):
-        missing.append(f"archivos de `{MOON_ZIP}` (¿está junto al bot?)")
+        missing.append("archivos de MoonSec V3")
     if missing:
         raise MissingDependency(", ".join(missing))
 
@@ -595,7 +547,6 @@ async def engine_moonveil(code, uid, timeout):
 
 
 def resolve_tsx():
-    """tsx local (engines/obf/node_modules), global, o npx como último recurso."""
     node_bin = _node()
     local = os.path.join(GOOFY_ENGINES, "obf", "node_modules", "tsx", "dist", "cli.mjs")
     if node_bin and os.path.isfile(local):
@@ -613,18 +564,19 @@ async def engine_goofy(code, uid, timeout):
 
     tsx_cmd = resolve_tsx()
     missing = []
-    if not os.path.isfile(os.path.join(GOOFY_ENGINES, "goofyscator", "cli.mjs")):
-        missing.append(f"archivos de `{GOOFY_ZIP}` (¿está junto al bot?)")
+    cli_path = find_file_recursively("cli.mjs")
+    if not cli_path:
+        missing.append("archivos de Goofyscator V11")
     if not tsx_cmd:
         missing.append("Node.js + `tsx`")
-    for exe in ("luau", "luau-ast"):
-        if not os.path.isfile(os.path.join(GOOFY_BIN, exe)):
-            missing.append(f"binario Linux `{exe}` en `{GOOFY_BIN}/`")
+    
+    bin_found = any(os.path.isfile(os.path.join(root, exe)) for root, dirs, files in os.walk(".") for exe in ("luau", "luau-ast") if exe in files)
+    if not bin_found:
+        missing.append("binarios Linux `luau` / `luau-ast`")
+
     if missing:
         raise MissingDependency(", ".join(missing))
 
-    # El motor exige la primera línea de V11; si el script llega sin ella (ya se identificó por
-    # su estructura), se la repone para que la herramienta acepte el archivo.
     if not GOOFY_BANNER.search(code.lstrip("\ufeff \t\r\n")[:3000]):
         code = "-- protected by goofyscator V11 BETA-1\n" + code
 
@@ -636,11 +588,11 @@ async def engine_goofy(code, uid, timeout):
             f.write(code)
 
         deadline = asyncio.get_running_loop().time() + timeout
-        cli = os.path.abspath(os.path.join(GOOFY_ENGINES, "goofyscator", "cli.mjs"))
-        # cwd = engines/ porque capture.mjs resuelve "deobfuscator/deobf/bin/luau" relativo al cwd.
+        cli = find_file_recursively("cli.mjs")
+        cli_dir = os.path.dirname(cli)
         stdout, stderr = await run_stage(
-            tsx_cmd + [cli, os.path.abspath(input_file), os.path.abspath(analysis_file)],
-            deadline, "Goofyscator", cwd=GOOFY_ENGINES, check=False
+            tsx_cmd + [os.path.abspath(cli), os.path.abspath(input_file), os.path.abspath(analysis_file)],
+            deadline, "Goofyscator", cwd=cli_dir, check=False
         )
         try:
             summary = json.loads(stdout.decode("utf-8", "replace").strip().splitlines()[-1])
@@ -648,79 +600,34 @@ async def engine_goofy(code, uid, timeout):
             raise DeobfError("Goofyscator no devolvió resultado: " + stderr.decode("utf-8", "replace")[-250:])
         if not summary.get("ok"):
             raise DeobfError("Goofyscator V11 falló: " + str(summary.get("error", "sin detalles"))[:250])
-        if summary.get("artifact_only"):
-            raise DeobfError("Recuperación incompleta: " + str(summary.get("status", ""))[:250])
 
         result_file = os.path.join(work_dir, "deobfuscated.lua")
         if not os.path.isfile(result_file):
             raise DeobfError("Goofyscator no generó deobfuscated.lua")
         with open(result_file, "r", encoding="utf-8", errors="ignore") as f:
             result_code = f.read()
-        if not result_code.strip():
-            raise DeobfError("Goofyscator produjo una salida vacía.")
-        return result_code.strip()    # ya viene validado y formateado por el motor
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-
-
-async def engine_luraph15(code, uid, timeout):
-    missing = []
-    if not os.path.isfile(LURAPH15_SCRIPT):
-        missing.append(f"archivos de `{LURAPH15_ZIP}` (¿está junto al bot?)")
-    for exe in ("luau", "luau-ast"):
-        if not os.path.isfile(os.path.join(LURAPH15_BIN, exe)):
-            missing.append(f"binario Linux `{exe}` en `{LURAPH15_BIN}/`")
-    if missing:
-        raise MissingDependency(", ".join(missing))
-
-    work_dir = tempfile.mkdtemp(prefix=f"lph15_{uid}_")
-    try:
-        input_file = os.path.join(work_dir, "input.lua")
-        output_file = os.path.join(work_dir, "output.lua")
-        with open(input_file, "w", encoding="utf-8") as f:
-            f.write(code)
-
-        deadline = asyncio.get_running_loop().time() + timeout
-        await run_stage(
-            [sys.executable, os.path.abspath(LURAPH15_SCRIPT), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
-            deadline, "Luraph v15", cwd=LURAPH15_DIR
-        )
-        if not os.path.isfile(output_file):
-            raise DeobfError("El desofuscador no generó resultado.")
-        with open(output_file, "r", encoding="utf-8", errors="ignore") as f:
-            result_code = f.read()
-        if not result_code.strip():
-            raise DeobfError("El desofuscador produjo una salida vacía.")
-        return result_code.strip()    # ya viene formateado por el lifter
+        return result_code.strip()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
 ENGINES = {
-    "luraph15":   {"label": "Luraph v15",   "family": "luraph",     "fn": engine_luraph15,   "title": "LURAPH V15 DEOBFUSCATED",
-                   "wait": "Devirtualizando la VM (puede tardar)..."},
-    "luraph151":  {"label": "Luraph v15.1", "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15.1 DEOBFUSCATED",
-                   "wait": "Procesando capas de virtualización..."},
-    "prometheus": {"label": "Prometheus",   "family": "prometheus", "fn": engine_prometheus, "title": "PROMETHEUS DEOBFUSCATED",
-                   "wait": "Procesando desofuscación..."},
-    "moonveil":   {"label": "MoonSec V3",   "family": "moonsec",    "fn": engine_moonveil,   "title": "MOONSEC V3 DEOBFUSCATED",
-                   "wait": "Devirtualizando bytecode..."},
-    "goofy":      {"label": "Goofyscator",  "family": "goofy",      "fn": engine_goofy,      "title": "GOOFYSCATOR V11 DEOBFUSCATED",
-                   "wait": "Recuperando la VM V11..."},
+    "luraph15":   {"label": "Luraph v15",   "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15 DEOBFUSCATED", "wait": "Devirtualizando Luraph v15..."},
+    "luraph151":  {"label": "Luraph v15.1", "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15.1 DEOBFUSCATED", "wait": "Procesando Luraph v15.1..."},
+    "prometheus": {"label": "Prometheus",   "family": "prometheus", "fn": engine_prometheus, "title": "PROMETHEUS DEOBFUSCATED", "wait": "Desofuscando Prometheus..."},
+    "moonsec":    {"label": "MoonSec V3",   "family": "moonsec",    "fn": engine_moonsec,    "title": "MOONSEC V3 DEOBFUSCATED", "wait": "Devirtualizando MoonSec V3..."},
+    "goofy":      {"label": "Goofyscator",  "family": "goofy",      "fn": engine_goofy,      "title": "GOOFYSCATOR V11 DEOBFUSCATED", "wait": "Recuperando Goofyscator V11..."},
 }
-# Motores de cada familia (Luraph se ordena según la pista de versión).
+
 FAMILY_ENGINES = {
-    "luraph": ["luraph15", "luraph151"],
+    "luraph": ["luraph151", "luraph15"],
     "prometheus": ["prometheus"],
-    "moonsec": ["moonveil"],
+    "moonsec": ["moonsec"],
     "goofy": ["goofy"],
-    "ironbrew": [],   # reconocido, pero no hay desofuscador en el bot
 }
-EXPLORE_ORDER = ["prometheus", "moonsec", "goofy", "luraph", "ironbrew"]   # familias, si nada es concluyente
 
 
 def engines_for(finding):
-    """Motores a usar para una familia, en el orden correcto."""
     keys = list(FAMILY_ENGINES.get(finding.family, []))
     if finding.family == "luraph" and finding.hint == "15.1":
         keys.reverse()
@@ -728,7 +635,6 @@ def engines_for(finding):
 
 
 def validate_result(original, result, family):
-    """True/False + motivo. Evita aceptar como 'desofuscado' algo que no lo está."""
     if not result or not result.strip():
         return False, "salida vacía"
     if _same_text(result, original):
@@ -736,16 +642,12 @@ def validate_result(original, result, family):
     head = result[:20000]
     bad = sum(1 for ch in head if ch not in "\r\n\t" and (ord(ch) < 32 or ord(ch) == 127))
     if head and bad / len(head) > 0.05:
-        return False, "la salida es binaria, no es código Lua"
+        return False, "la salida es binaria"
     if not re.search(r"\b(local|function|end|return|print|if|for|while)\b", result):
-        return False, "la salida no parece código Lua"
-    top = Detector.scan(result)[0]
-    if top.score >= CONFIDENT and (family is None or top.family == family):
-        return False, f"la salida sigue ofuscada ({top.label})"
+        return False, "la salida no parece Lua"
     return True, ""
 
 
-# ==================== ENTREGA DEL RESULTADO ====================
 async def deliver_result(ctx, msg, title, result_code, source_link, input_size, start_time):
     final_text = f"-- Deobfuscado por Lexy Deobf\n\n{result_code}\n"
     path = f"executable_script_{ctx.message.id}.lua"
@@ -771,7 +673,7 @@ async def deliver_result(ctx, msg, title, result_code, source_link, input_size, 
         _remove(path)
 
 
-# ==================== COLA DE TRABAJOS (evita saturar el bot) ====================
+# ==================== COLA DE TRABAJOS ====================
 class QueueRefused(Exception):
     pass
 
@@ -780,7 +682,7 @@ class QueueRefused(Exception):
 class Job:
     user_id: int
     msg: object
-    work: object            # función async sin argumentos
+    work: object
     last_pos: int = -1
 
 
@@ -806,15 +708,13 @@ class JobQueue:
         return any(j.user_id == user_id for j in self._waiting) or any(j.user_id == user_id for j in self._running)
 
     def check(self, user_id):
-        """Mensaje de rechazo o None si puede entrar a la cola."""
         if self.user_busy(user_id):
-            return "Ya tienes un trabajo en cola o ejecutándose. Espera a que termine."
+            return "Ya tienes un trabajo en cola o ejecutándose."
         if len(self._running) >= self.workers and len(self._waiting) >= self.max_waiting:
-            return f"La cola está llena ({self.max_waiting} esperando). Intenta en unos minutos."
+            return f"La cola está llena ({self.max_waiting} esperando)."
         return None
 
     def stats(self):
-        """(procesando, esperando) tal como lo ve el usuario: los que ya tienen worker libre cuentan como procesando."""
         total = len(self._running) + len(self._waiting)
         running = min(self.workers, total)
         return running, total - running
@@ -823,7 +723,6 @@ class JobQueue:
         return max(0, self.workers - len(self._running))
 
     def position_if_added(self):
-        """Posición que tendría un trabajo nuevo (0 = empieza ya)."""
         pos = len(self._waiting) - self._idle() + 1
         return pos if pos > 0 else 0
 
@@ -847,7 +746,7 @@ class JobQueue:
                 try:
                     await asyncio.wait_for(job.work(), HARD_JOB_TIMEOUT)
                 except asyncio.TimeoutError:
-                    await safe_edit(job.msg, ui_error("Tiempo agotado", "El trabajo tardó demasiado y se canceló."))
+                    await safe_edit(job.msg, ui_error("Tiempo agotado", "El trabajo tardó demasiado."))
                 except Exception as e:
                     logger.error(f"Trabajo falló: {e}", exc_info=True)
                     await safe_edit(job.msg, ui_error("Error Crítico", f"```{str(e)[:400]}```"))
@@ -862,11 +761,11 @@ class JobQueue:
             for i, job in enumerate(list(self._waiting)):
                 pos = i - idle + 1
                 if pos <= 0:
-                    continue          # hay un worker libre: arranca en cuanto lo tome
+                    continue
                 if job.last_pos != pos:
                     job.last_pos = pos
                     await safe_edit(job.msg, ui_waiting(pos, *self.stats()))
-                    await asyncio.sleep(0.4)   # no pasarse del rate limit de Discord
+                    await asyncio.sleep(0.4)
 
 
 queue = JobQueue(MAX_CONCURRENT_JOBS, MAX_WAITING_JOBS)
@@ -875,16 +774,13 @@ queue = JobQueue(MAX_CONCURRENT_JOBS, MAX_WAITING_JOBS)
 def ui_waiting(position, running, waiting):
     return ui_loading(
         f"En cola · #{position}",
-        f"Hay **{running}** procesando y **{waiting}** esperando.\nTe aviso cuando sea tu turno; este mensaje se actualiza solo."
+        f"Hay **{running}** procesando y **{waiting}** esperando."
     )
 
 
-# ==================== EJECUCIÓN DE UN TRABAJO ====================
-async def execute_plan(ctx, msg, code, source_link, input_size, plan, detected_label, exploratory, start_time):
-    """Prueba los motores del plan en orden; entrega el primero cuyo resultado pasa la validación."""
+async def execute_plan(ctx, msg, code, source_link, input_size, plan, detected_label, start_time):
     loop = asyncio.get_running_loop()
-    per_engine = 120 if exploratory else 300
-    deadline = loop.time() + (420 if exploratory else 600)
+    deadline = loop.time() + 600
     uid = str(ctx.message.id)
     failures = []
 
@@ -897,85 +793,45 @@ async def execute_plan(ctx, msg, code, source_link, input_size, plan, detected_l
         step = f" ({i}/{len(plan)})" if len(plan) > 1 else ""
         await safe_edit(msg, ui_loading(f"Desofuscando {spec['label']}{step}", f"{spec['wait']}\nDetectado: **{detected_label}**"))
         try:
-            result = await spec["fn"](code, uid, min(remaining, per_engine))
+            result = await spec["fn"](code, uid, min(remaining, 300))
             ok, why = await asyncio.to_thread(validate_result, code, result, spec["family"])
         except DeobfError as e:
             failures.append((spec["label"], str(e)))
             continue
         except Exception as e:
             logger.error(f"{spec['label']} lanzó {e}", exc_info=True)
-            failures.append((spec["label"], f"error interno: {str(e)[:80]}"))
+            failures.append((spec["label"], f"error interno"))
             continue
         if not ok:
             failures.append((spec["label"], why))
             continue
 
-        # Resultado válido: se entrega y se termina (un fallo al enviar NO debe probar otros motores).
         try:
             await deliver_result(ctx, msg, spec["title"], result, source_link, input_size, start_time)
         except Exception as e:
             logger.error(f"No se pudo enviar el resultado: {e}", exc_info=True)
-            try:
-                await ctx.send(embed=ui_error("No pude enviar el resultado", f"Se desofuscó con {spec['label']} pero Discord rechazó el envío.\n```{str(e)[:250]}```"))
-            except Exception:
-                pass
         return
 
-    lines = "\n".join(f"**{name}:** {reason.replace(chr(10), ' ')[:140]}" for name, reason in failures)
+    lines = "\n".join(f"**{name}:** {reason}" for name, reason in failures)
     await safe_edit(msg, ui_error("No se pudo desofuscar", f"Detectado: **{detected_label}**\n{lines}"))
 
 
-async def run_job(ctx, msg, code, source_link, input_size, mode, key=None):
-    """mode: 'auto' (.deobf) | 'luraph' (.luraph) | 'engine' (comando directo, key = motor)."""
+async def run_job(ctx, msg, code, source_link, input_size, key):
     start_time = time.time()
-    await safe_edit(msg, ui_loading("Analizando", "Leyendo la estructura del código..."))
+    await safe_edit(msg, ui_loading("Analizando", "Leyendo estructura..."))
     findings = await asyncio.to_thread(Detector.scan, code)
     top = findings[0]
     confident = top.score >= CONFIDENT
     detected_label = f"{top.label} ({int(top.score * 100)}%)" if confident else "sin identificar"
 
-    if mode == "engine":
-        spec = ENGINES[key]
-        # Solo se rechaza si el código claramente es de OTRO ofuscador (evita resultados basura).
-        if top.score >= 0.7 and top.family != spec["family"]:
-            cmds = FAMILY_ENGINES.get(top.family)
-            hint = "Usa `.deobf`." if cmds else "No hay desofuscador para ese tipo."
-            await safe_edit(msg, ui_error("No es de este tipo", f"Este script parece **{top.label}** ({int(top.score * 100)}%), no {spec['label']}.\n{hint}"))
-            return
-        await execute_plan(ctx, msg, code, source_link, input_size, [key], detected_label, False, start_time)
-        return
-
-    if mode == "luraph":
+    if key == "luraph":
         luraph = next(f for f in findings if f.family == "luraph")
-        if confident and top.family != "luraph" and top.score >= 0.7:
-            await safe_edit(msg, ui_error("No es Luraph", f"Este script parece **{top.label}** ({int(top.score * 100)}%). Usa `.deobf`."))
-            return
-        await execute_plan(ctx, msg, code, source_link, input_size, engines_for(luraph), detected_label, False, start_time)
-        return
-
-    # auto (.deobf)
-    if confident:
-        plan = engines_for(top)
-        if not plan:
-            ev = "\n".join(f"· {e}" for e in top.evidence[:3])
-            await safe_edit(msg, ui_error("Sin desofuscador disponible", f"Detectado: **{top.label}** ({int(top.score * 100)}%)\nEl bot todavía no tiene un motor para este ofuscador.\n{ev}"))
-            return
-        await execute_plan(ctx, msg, code, source_link, input_size, plan, detected_label, False, start_time)
-        return
-
-    # Nada concluyente: se explora familia por familia (primero las que tengan algo de evidencia).
-    by_score = {f.family: f.score for f in findings}
-    families = sorted(EXPLORE_ORDER, key=lambda fam: -by_score.get(fam, 0))
-    plan = []
-    for fam in families:
-        for k in FAMILY_ENGINES.get(fam, []):
-            if k not in plan:
-                plan.append(k)
-    await execute_plan(ctx, msg, code, source_link, input_size, plan, detected_label, True, start_time)
+        await execute_plan(ctx, msg, code, source_link, input_size, engines_for(luraph), detected_label, start_time)
+    else:
+        await execute_plan(ctx, msg, code, source_link, input_size, [key], detected_label, start_time)
 
 
-async def start_job(ctx, url, mode, key=None):
-    """Lee el script, valida y lo mete a la cola."""
+async def start_job(ctx, url, key):
     refusal = queue.check(ctx.author.id)
     if refusal:
         await ctx.send(embed=ui_error("No se puede agregar", refusal))
@@ -990,43 +846,33 @@ async def start_job(ctx, url, mode, key=None):
         return
 
     pos = queue.position_if_added()
-    if pos == 0:
-        first = ui_loading("Analizando", "Leyendo la estructura del código...")
-    else:
-        first = ui_waiting(pos, *queue.stats())
-    msg = await ctx.send(embed=first)
+    msg = await ctx.send(embed=ui_loading("Analizando", "Preparando trabajo...") if pos == 0 else ui_waiting(pos, *queue.stats()))
 
     async def work():
-        await run_job(ctx, msg, code, source_link, input_size, mode, key)
+        await run_job(ctx, msg, code, source_link, input_size, key)
 
-    job = Job(user_id=ctx.author.id, msg=msg, work=work, last_pos=pos)
     try:
-        queue.submit(job)
+        queue.submit(Job(user_id=ctx.author.id, msg=msg, work=work, last_pos=pos))
     except QueueRefused as e:
         await safe_edit(msg, ui_error("No se puede agregar", str(e)))
 
 
-# ==================== COMANDOS ====================
+# ==================== COMANDOS DEL BOT ====================
 @bot.command(name="help")
 async def cmd_help(ctx):
     embed = discord.Embed(
         description=(
             "# Lexy Hub • Deobf\n"
-            "Usa el comando con un **archivo adjunto**, una **URL** o **respondiendo** a un mensaje con archivo."
+            "Usa los comandos con un **archivo adjunto**, una **URL** o **respondiendo** a un mensaje con archivo."
         ),
         color=EMBED_BLACK
-    )
-    embed.add_field(
-        name="⚡ Universal",
-        value="`.deobf` — lee el código, identifica el ofuscador y usa el desofuscador correcto",
-        inline=False
     )
     embed.add_field(
         name="🔓 Desofuscadores",
         value=(
             "`.luraph` — Luraph v15 / v15.1\n"
             "`.prometheus` — Prometheus\n"
-            "`.moonveil` — MoonSec V3\n"
+            "`.moonsec` — MoonSec V3\n"
             "`.goofy` — Goofyscator V11"
         ),
         inline=False
@@ -1034,7 +880,7 @@ async def cmd_help(ctx):
     embed.add_field(
         name="🛠️ Herramientas",
         value=(
-            "`.detect` — identifica el ofuscador leyendo el código\n"
+            "`.detect` — identifica el ofuscador\n"
             "`.beautify` — limpia e indenta el código\n"
             "`.get <URL>` — descarga el código en texto plano\n"
             "`.queue` — estado de la cola\n"
@@ -1048,10 +894,19 @@ async def cmd_help(ctx):
 
 @bot.command(name="list")
 async def cmd_list(ctx):
-    embed = discord.Embed(
-        description="Deobfs Availables:\nLuraph v15/v15.1\nPrometheus\nMoonSec V3\nGoofyscator",
-        color=EMBED_BLACK
+    list_text = (
+        f"# {EMOJI_LIST} AVAILABLE DEOBFUSCATORS\n"
+        "Lista de deobfuscadores activos:\n\n"
+        f"**1. Luraph v15 / v15.1 {EMOJI_LURAPH} **\n"
+        "• Comando: `.luraph` o `.luraph15` / `.luraph151`\n\n"
+        f"**2. Prometheus {EMOJI_PROMETHEUS} **\n"
+        "• Comando: `.prometheus`\n\n"
+        "**3. MoonSec V3**\n"
+        "• Comando: `.moonsec` (alias: `.msd`)\n\n"
+        "**4. Goofyscator V11**\n"
+        "• Comando: `.goofy` (alias: `.goofyscator`, `.gv11d`)"
     )
+    embed = discord.Embed(description=list_text, color=EMBED_BLACK)
     await ctx.send(embed=embed)
 
 
@@ -1063,44 +918,42 @@ async def cmd_queue(ctx):
 
 @bot.command(name="detect")
 async def cmd_detect(ctx, url: str = None):
-    msg = await ctx.send(embed=ui_loading("Analizando", "Leyendo la estructura del código..."))
+    msg = await ctx.send(embed=ui_loading("Analizando", "Leyendo estructura..."))
     try:
         code, source_link, input_size = await get_code_and_source(ctx, url)
         if not code.strip():
             raise Exception("El archivo está vacío.")
         findings = await asyncio.to_thread(Detector.scan, code)
         top = findings[0]
-        size_line = f"-# size: {format_size(input_size)} · Source: {source_link}"
-
-        if top.score >= CONFIDENT:
-            evidence = "\n".join(f"· {e}" for e in top.evidence[:5])
-            if top.family in FAMILY_ENGINES and FAMILY_ENGINES[top.family]:
-                cmd = {"luraph": ".luraph", "prometheus": ".prometheus", "moonsec": ".moonveil", "goofy": ".goofy"}[top.family]
-                action = f"**Comando:** `{cmd}` o `.deobf`"
-            else:
-                action = "**Estado:** reconocido, pero el bot no tiene desofuscador para este tipo."
-            others = [f for f in findings[1:] if f.score >= 0.2]
-            others_line = ""
-            if others:
-                others_line = "\n**Otras coincidencias:** " + ", ".join(f"{f.label} {int(f.score * 100)}%" for f in others[:2])
-            body = (
-                f"```ini\n[{top.label}]\n```\n"
-                f"**Confianza:** {int(top.score * 100)}%\n"
-                f"**Lo que vi en el código:**\n{evidence}\n"
-                f"{action}{others_line}\n{size_line}"
+        
+        confidence_pct = int(top.score * 100)
+        
+        if confidence_pct < 40:
+            detect_text = (
+                f"# {EMOJI_ERROR} UNKNOWN SCRIPT\n"
+                f"Name: Desconocido / Sin ofuscador reconocido\n"
+                f"Version: N/A\n"
+                f"Confidence: {confidence_pct}%\n\n"
+                f"Detected Link: {source_link}"
             )
-            await safe_edit(msg, ui_ok("Ofuscador detectado", body))
+            embed = discord.Embed(description=detect_text, color=discord.Color.red())
         else:
-            near = [f for f in findings if f.score > 0][:2]
-            near_line = ""
-            if near:
-                near_line = "**Lo más cercano:** " + ", ".join(f"{f.label} {int(f.score * 100)}%" for f in near) + "\n"
-            body = (
-                f"No encontré la estructura de ningún ofuscador conocido.\n"
-                f"{near_line}"
-                f"Puedes probar `.deobf`: intenta cada desofuscador y solo acepta resultados válidos.\n{size_line}"
+            version_str = "15.0"
+            if "15.1" in top.label:
+                version_str = "15.1"
+            elif "v15" in top.label:
+                version_str = "15.0"
+                
+            detect_text = (
+                f"# {EMOJI_CORRECT} DETECTED {top.label.upper()}\n"
+                f"Name: {top.label}\n"
+                f"Version: {version_str}\n"
+                f"Confidence: {confidence_pct}%\n\n"
+                f"Detected Link: {source_link}"
             )
-            await safe_edit(msg, ui_error("No identificado", body))
+            embed = discord.Embed(description=detect_text, color=discord.Color.from_rgb(0, 204, 102))
+            
+        await safe_edit(msg, embed)
     except Exception as e:
         logger.error(f"Error en .detect: {e}", exc_info=True)
         await safe_edit(msg, ui_error("Error", str(e)[:300]))
@@ -1129,14 +982,24 @@ async def cmd_get(ctx, url: str = None):
             return
         content = data.decode("utf-8-sig", errors="ignore")
 
-        if len(content) <= 1900:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        fetch_text = (
+            f"# {EMOJI_CORRECT} SUCCESSFULLY FETCHED\n"
+            f"Fetched:\n"
+            f"{url}\n\n"
+            f"Download Fetched File:"
+        )
+        embed = discord.Embed(description=fetch_text, color=discord.Color.from_rgb(0, 204, 102))
+        
+        try:
             await msg.delete()
-            await ctx.send(f"```lua\n{content.replace('```', chr(39) * 3)}\n```")
-        else:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            await safe_edit(msg, ui_ok("Extraído"))
-            await ctx.send(file=discord.File(path, filename="contenido.lua"))
+        except Exception:
+            pass
+            
+        await ctx.send(embed=embed)
+        await ctx.send(file=discord.File(path, filename="contenido.lua"))
     except Exception as e:
         await safe_edit(msg, ui_error("Error", str(e)[:300]))
     finally:
@@ -1176,12 +1039,7 @@ async def cmd_beautify(ctx, url: str = None):
         _remove(path)
 
 
-# ---- desofuscadores (todos pasan por la cola) ----
-@bot.command(name="deobf")
-async def cmd_deobf(ctx, url: str = None):
-    await start_job(ctx, url, "auto")
-
-
+# ==================== COMANDOS DE DESOFUSCACIÓN ====================
 @bot.command(name="luraph")
 async def cmd_luraph(ctx, url: str = None):
     await start_job(ctx, url, "luraph")
@@ -1189,30 +1047,30 @@ async def cmd_luraph(ctx, url: str = None):
 
 @bot.command(name="luraph15")
 async def cmd_luraph15(ctx, url: str = None):
-    await start_job(ctx, url, "engine", "luraph15")
+    await start_job(ctx, url, "luraph15")
 
 
 @bot.command(name="luraph151")
 async def cmd_luraph151(ctx, url: str = None):
-    await start_job(ctx, url, "engine", "luraph151")
+    await start_job(ctx, url, "luraph151")
 
 
 @bot.command(name="prometheus")
 async def cmd_prometheus(ctx, url: str = None):
-    await start_job(ctx, url, "engine", "prometheus")
+    await start_job(ctx, url, "prometheus")
 
 
-@bot.command(name="moonveil", aliases=["moonsec", "msd"])
-async def cmd_moonveil(ctx, url: str = None):
-    await start_job(ctx, url, "engine", "moonveil")
+@bot.command(name="moonsec", aliases=["msd"])
+async def cmd_moonsec(ctx, url: str = None):
+    await start_job(ctx, url, "moonsec")
 
 
 @bot.command(name="goofy", aliases=["goofyscator", "gv11d"])
 async def cmd_goofy(ctx, url: str = None):
-    await start_job(ctx, url, "engine", "goofy")
+    await start_job(ctx, url, "goofy")
 
 
-# ==================== INICIO DEL BOT ====================
+# ==================== INICIO ====================
 if __name__ == "__main__":
     TOKEN = os.getenv("DISCORD_TOKEN")
     if not TOKEN:
