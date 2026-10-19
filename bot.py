@@ -98,6 +98,9 @@ extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_ENGINES, GOOFY_DIR)
 
+# Crear la carpeta output obligatoria que exige deob.js
+os.makedirs("output", exist_ok=True)
+
 # 2. Aplicar permisos de ejecución a binarios necesarios
 make_all_binaries_executable()
 
@@ -260,7 +263,7 @@ class Detector:
             moon_ev.append("Constantes cifradas de MoonSec V3 (\\4\\8)")
         findings.append(Finding("moonsec", "MoonSec V3", moon_score, moon_ev))
 
-        # 4. Luraph v15 / v15.1 (Ambos usan el motor unificado v15.1)
+        # 4. Luraph v15 / v15.1
         lur_score = 0.0
         lur_ev = []
         lur_hint = ""
