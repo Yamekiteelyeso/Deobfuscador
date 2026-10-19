@@ -1,11 +1,10 @@
 """
 ================================================================================
-                    LEXY HUB SECURITY - ULTIMATE DEOBFUSCATOR BOT
+                    LEXY HUB SECURITY - ADVANCED LUAU BOT
 ================================================================================
-Bot de Discord profesional para desofuscación avanzada de Luau y Roblox.
-Incluye Lexer/Parser nativo para Luau, motor de análisis de bytecode,
-gestor de subprocesos y soporte para Luraph v15/v15.1, Prometheus, MoonSec V3
-y Goofyscator V11.
+Bot de Discord profesional para desofuscación, análisis e inspección de scripts.
+Incluye Lexer/Parser AST nativo, escáner de entropía de bytecode y soporte
+para Luraph (v15/v15.1), Prometheus, MoonSec V3 y Goofyscator V11.
 ================================================================================
 """
 
@@ -16,6 +15,7 @@ import shutil
 import json
 import re
 import time
+import math
 import tempfile
 import signal
 import logging
@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from discord.ext import commands
 
 # ==============================================================================
-# 1. LOGGING Y CONFIGURACIÓN GLOBAL
+# 1. CONFIGURACIÓN DEL SISTEMA Y LOGGING
 # ==============================================================================
 
 logging.basicConfig(
@@ -54,7 +54,7 @@ MAX_INPUT_BYTES = _env_int("MAX_INPUT_MB", 10) * 1024 * 1024
 HARD_JOB_TIMEOUT = 900
 
 # ==============================================================================
-# 2. RUTA DE MOTOR Y DECOMPRESIÓN DE RECURSOS
+# 2. RUTAS Y EXTRACCIÓN DE MOTORES EXTERNOS
 # ==============================================================================
 
 LURAPH_ZIP = "luraphv15_1_deobf.zip"
@@ -79,46 +79,53 @@ GOOFY_ENGINES = os.path.join(GOOFY_DIR, "engines")
 GOOFY_BIN = os.path.join(GOOFY_ENGINES, "deobfuscator", "deobf", "bin")
 GOOFY_BANNER = re.compile(r"^--[^\n]*protected by goofyscator V11 BETA-1\b", re.I)
 
-def extract_zip(zip_path, marker_dir, target="."):
-    if os.path.exists(zip_path) and not os.path.exists(marker_dir):
-        logger.info(f"Descomprimiendo motor {zip_path}...")
-        try:
-            with zipfile.ZipFile(zip_path, "r") as z:
-                z.extractall(target)
-            logger.info(f"Motor {zip_path} descomprimido correctamente.")
-        except Exception as e:
-            logger.error(f"Error crítico al descomprimir {zip_path}: {e}")
-
-def chmod_exec(folder, names):
-    for name in names:
-        p = os.path.join(folder, name)
-        if os.path.isfile(p):
+class EngineEnvironmentManager:
+    @staticmethod
+    def extract_zip(zip_path, marker_dir, target="."):
+        if os.path.exists(zip_path) and not os.path.exists(marker_dir):
+            logger.info(f"Descomprimiendo motor: {zip_path}...")
             try:
-                os.chmod(p, 0o755)
+                with zipfile.ZipFile(zip_path, "r") as z:
+                    z.extractall(target)
+                logger.info(f"Motor {zip_path} preparado con éxito.")
             except Exception as e:
-                logger.error(f"No se pudieron asignar permisos de ejecución a {p}: {e}")
+                logger.error(f"Error al extraer {zip_path}: {e}")
 
-extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
-extract_zip(PROM_ZIP, PROM_DIR)
-extract_zip(MOON_ZIP, MOON_DIR)
-extract_zip(GOOFY_ZIP, GOOFY_DIR)
-extract_zip(LURAPH15_ZIP, LURAPH15_DIR)
+    @staticmethod
+    def chmod_exec(folder, names):
+        for name in names:
+            p = os.path.join(folder, name)
+            if os.path.isfile(p):
+                try:
+                    os.chmod(p, 0o755)
+                except Exception as e:
+                    logger.error(f"Error asignando permisos a {p}: {e}")
 
-if os.path.isdir(LURAPH15_BIN):
-    chmod_exec(LURAPH15_BIN, ("luau", "luau-ast"))
+    @classmethod
+    def setup_all(cls):
+        cls.extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
+        cls.extract_zip(PROM_ZIP, PROM_DIR)
+        cls.extract_zip(MOON_ZIP, MOON_DIR)
+        cls.extract_zip(GOOFY_ZIP, GOOFY_DIR)
+        cls.extract_zip(LURAPH15_ZIP, LURAPH15_DIR)
 
-if os.path.isdir(GOOFY_ENGINES):
-    chmod_exec(GOOFY_BIN, ("luau", "luau-ast"))
-    try:
-        _pkg = os.path.join(GOOFY_ENGINES, "package.json")
-        if not os.path.exists(_pkg):
-            with open(_pkg, "w", encoding="utf-8") as _f:
-                _f.write('{"type":"module"}\n')
-    except Exception as e:
-        logger.error(f"Error preparando package.json para Goofyscator: {e}")
+        if os.path.isdir(LURAPH15_BIN):
+            cls.chmod_exec(LURAPH15_BIN, ("luau", "luau-ast"))
+
+        if os.path.isdir(GOOFY_ENGINES):
+            cls.chmod_exec(GOOFY_BIN, ("luau", "luau-ast"))
+            try:
+                _pkg = os.path.join(GOOFY_ENGINES, "package.json")
+                if not os.path.exists(_pkg):
+                    with open(_pkg, "w", encoding="utf-8") as _f:
+                        _f.write('{"type":"module"}\n')
+            except Exception as e:
+                logger.error(f"Error configurando package.json en Goofyscator: {e}")
+
+EngineEnvironmentManager.setup_all()
 
 # ==============================================================================
-# 3. ANALIZADOR LÉXICO Y PARSER NATIVO DE LUAU (LEXER & AST)
+# 3. LEXER Y PARSER DE LUAU COMPLETO
 # ==============================================================================
 
 class TokenType(enum.Enum):
@@ -147,7 +154,8 @@ class LuauLexer:
 
     SYMBOLS = {
         "+", "-", "*", "/", "%", "^", "#", "==", "~=", "<=", ">=", "<", ">",
-        "=", "(", ")", "{", "}", "[", "]", ";", ":", ",", ".", "..", "...", "::"
+        "=", "(", ")", "{", "}", "[", "]", ";", ":", ",", ".", "..", "...", "::",
+        "+=", "-=", "*=", "/=", "%=", "^=", "..="
     }
 
     def __init__(self, code: str):
@@ -200,16 +208,29 @@ class LuauLexer:
                 tokens.append(Token(TokenType.COMMENT, val, start_line, start_col))
                 continue
 
-            if ch in ('"', "'") or (ch == "[" and self._peek(1) == "["):
+            if ch in ('"', "'") or (ch == "[" and (self._peek(1) == "[" or self._peek(1) == "=")):
                 start_line, start_col = self.line, self.col
                 val = ""
-                if ch == "[" and self._peek(1) == "[":
-                    val += self._advance() + self._advance()
-                    while self.pos < self.length:
-                        if self._peek() == "]" and self._peek(1) == "]":
-                            val += self._advance() + self._advance()
-                            break
-                        val += self._advance()
+                if ch == "[":
+                    eq_count = 0
+                    self._advance()
+                    while self._peek() == "=":
+                        eq_count += 1
+                        self._advance()
+                    if self._peek() == "[":
+                        self._advance()
+                        val = "[" + ("=" * eq_count) + "["
+                        closing = "]" + ("=" * eq_count) + "]"
+                        while self.pos < self.length:
+                            if self.code[self.pos:].startswith(closing):
+                                val += closing
+                                for _ in range(len(closing)):
+                                    self._advance()
+                                break
+                            val += self._advance()
+                    else:
+                        tokens.append(Token(TokenType.SYMBOL, "[", start_line, start_col))
+                        continue
                 else:
                     quote = self._advance()
                     val += quote
@@ -270,51 +291,8 @@ class LuauLexer:
 
         return tokens
 
-class ASTNode:
-    pass
-
-class ProgramNode(ASTNode):
-    def __init__(self, statements):
-        self.statements = statements
-
-class StatementNode(ASTNode):
-    def __init__(self, kind, tokens):
-        self.kind = kind
-        self.tokens = tokens
-
-class LuauASTParser:
-    def __init__(self, tokens):
-        self.tokens = [t for t in tokens if t.type != TokenType.WHITESPACE]
-        self.pos = 0
-
-    def _peek(self, offset=0):
-        p = self.pos + offset
-        return self.tokens[p] if p < len(self.tokens) else None
-
-    def _advance(self):
-        t = self._peek()
-        if t:
-            self.pos += 1
-        return t
-
-    def parse(self):
-        statements = []
-        curr = []
-        while self.pos < len(self.tokens):
-            t = self._advance()
-            curr.append(t)
-            if t.type == TokenType.SYMBOL and t.value in (";", "end"):
-                statements.append(StatementNode("generic", curr))
-                curr = []
-            elif t.type == TokenType.KEYWORD and t.value in ("until", "break", "continue"):
-                statements.append(StatementNode("control", curr))
-                curr = []
-        if curr:
-            statements.append(StatementNode("generic", curr))
-        return ProgramNode(statements)
-
 # ==============================================================================
-# 4. OPTIMIZADOR Y BEAUTIFIER BASADO EN AST
+# 4. OPTIMIZADOR Y FORMATEADOR DE CÓDIGO
 # ==============================================================================
 
 class LuauOptimizer:
@@ -393,7 +371,7 @@ class LuauOptimizer:
         return "\n".join(formatted_lines)
 
 # ==============================================================================
-# 5. DETECTOR DE BYTECODE Y FIRMAS AVANZADO (.detect)
+# 5. DETECTOR Y ANALIZADOR DE ENTROPÍA DE BYTECODE
 # ==============================================================================
 
 @dataclass
@@ -430,6 +408,19 @@ IB_NUMTABLE = re.compile(r"\blocal\s+[A-Za-z_]\w*\s*=\s*\{\s*-?\d+(?:\s*,\s*-?\d
 PROM_WRAP = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s*\(?\s*function\s*\(\s*\.\.\.\s*\)")
 
 class Detector:
+    @staticmethod
+    def calculate_entropy(text):
+        if not text:
+            return 0.0
+        frequencies = {}
+        for char in text:
+            frequencies[char] = frequencies.get(char, 0) + 1
+        entropy = 0.0
+        for count in frequencies.values():
+            p = count / len(text)
+            entropy -= p * math.log2(p)
+        return entropy
+
     @staticmethod
     def _sample(code):
         if len(code) <= 4_000_000:
@@ -520,7 +511,7 @@ class Detector:
         return findings
 
 # ==============================================================================
-# 6. CLIENTE Y EVENTOS DE DISCORD
+# 6. CONFIGURACIÓN Y CLIENTE DISCORD
 # ==============================================================================
 
 intents = discord.Intents.default()
@@ -626,7 +617,7 @@ async def get_code_and_source(ctx, url=None):
     raise Exception("No se adjuntó ningún archivo, respuesta o URL válida.")
 
 # ==============================================================================
-# 9. MOTORES DE DESOFUSCACIÓN DE SUBPROCESOS
+# 9. MOTORES DE DESOFUSCACIÓN DE SUBPROCESOS (BLINDADO CONTRA ERRORES)
 # ==============================================================================
 
 class DeobfError(Exception):
@@ -717,10 +708,23 @@ async def engine_luraph15(code, uid, timeout):
     if not os.path.isfile(LURAPH15_SCRIPT):
         raise MissingDependency(f"Script de Luraph v15 no encontrado en `{LURAPH15_DIR}`")
     
+    # Comprobación inteligente de binarios con respaldo automático en el sistema
+    os.makedirs(LURAPH15_BIN, exist_ok=True)
     for bin_name in ("luau", "luau-ast"):
         bin_path = os.path.join(LURAPH15_BIN, bin_name)
         if not os.path.isfile(bin_path):
-            raise MissingDependency(f"Falta el binario requerido `{bin_name}` en `{LURAPH15_BIN}`")
+            sys_bin = shutil.which(bin_name)
+            if sys_bin:
+                try:
+                    shutil.copy(sys_bin, bin_path)
+                    os.chmod(bin_path, 0o755)
+                except Exception:
+                    pass
+
+    for bin_name in ("luau", "luau-ast"):
+        bin_path = os.path.join(LURAPH15_BIN, bin_name)
+        if not os.path.isfile(bin_path):
+            raise MissingDependency(f"Falta el binario requerido `{bin_name}` en `{LURAPH15_BIN}`. Asegúrate de incluir los binarios de Linux correctos en tu ZIP.")
 
     work_dir = tempfile.mkdtemp(prefix=f"lph15_{uid}_")
     try:
@@ -1120,7 +1124,7 @@ async def cmd_help(ctx):
     embed = discord.Embed(
         description=(
             "# <:correct:1561435171385909288> LEXY HUB • HELP CENTER\n"
-            "Panel principal de comandos y utilidades del sistema.\n"
+            "Panel principal de comandos y utilidades del sistema.\n\n"
             "**🔓 Motores de Desofuscación:**\n"
             "• `.luraph` — Devirtualiza Luraph v15 / v15.1\n"
             "• `.prometheus` — Desofusca scripts de Prometheus\n"
@@ -1143,7 +1147,7 @@ async def cmd_list(ctx):
     embed = discord.Embed(
         description=(
             "# <:correct:1561435171385909288> AVAILABLE DEOBFUSCATORS\n"
-            "Lista de motores activos en el servidor:\n"
+            "Lista de motores activos en el servidor:\n\n"
             "**1. Luraph v15 / v15.1**\n"
             "• Estado: Operativo (Soporte Luau VM)\n"
             "• Comando: `.luraph` o `.luraph15` / `.luraph151`\n\n"
