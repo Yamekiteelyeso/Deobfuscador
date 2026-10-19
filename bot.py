@@ -57,7 +57,6 @@ MOON_DLL = os.path.join(MOON_DIR, "bin", "Release", "net9.0", "MoonsecDeobfuscat
 MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
 LURAPH15_ZIP = "luraphv15.zip"
-LURAPH15_DIR = "Deobfuscator"
 
 GOOFY_ZIP = "goofyscator-deobf.zip"
 GOOFY_DIR = "goofyscator-deobf"
@@ -95,18 +94,17 @@ def make_all_binaries_executable():
                     pass
 
 
-# 1. Descomprimir todas las herramientas una sola vez
+# 1. Descomprimir todas las herramientas una sola vez de forma limpia
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_ENGINES, GOOFY_DIR)
 
-if os.path.exists(LURAPH15_ZIP) and not os.path.exists(LURAPH15_DIR):
+if os.path.exists(LURAPH15_ZIP) and not find_file_recursively("deob.py"):
     logger.info(f"Descomprimiendo {LURAPH15_ZIP}...")
     try:
-        os.makedirs(LURAPH15_DIR, exist_ok=True)
         with zipfile.ZipFile(LURAPH15_ZIP, "r") as z:
-            z.extractall(LURAPH15_DIR)
+            z.extractall(".")  # Extrae directamente en la raíz sin duplicar carpetas
         logger.info(f"{LURAPH15_ZIP} descomprimido con éxito.")
     except Exception as e:
         logger.error(f"Error al descomprimir {LURAPH15_ZIP}: {e}")
