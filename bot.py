@@ -56,8 +56,6 @@ MOON_DIR = "moonsec-v3"
 MOON_DLL = os.path.join(MOON_DIR, "bin", "Release", "net9.0", "MoonsecDeobfuscator.dll")
 MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
-LURAPH15_ZIP = "luraphv15.zip"
-
 GOOFY_ZIP = "goofyscator-deobf.zip"
 GOOFY_DIR = "goofyscator-deobf"
 GOOFY_ENGINES = os.path.join(GOOFY_DIR, "engines")
@@ -94,35 +92,13 @@ def make_all_binaries_executable():
                     pass
 
 
-# 1. Descomprimir todas las herramientas una sola vez de forma limpia
+# 1. Descomprimir herramientas limpias
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_ENGINES, GOOFY_DIR)
 
-if os.path.exists(LURAPH15_ZIP) and not find_file_recursively("deob.py"):
-    logger.info(f"Descomprimiendo {LURAPH15_ZIP}...")
-    try:
-        with zipfile.ZipFile(LURAPH15_ZIP, "r") as z:
-            z.extractall(".")  # Extrae directamente en la raíz sin duplicar carpetas
-        logger.info(f"{LURAPH15_ZIP} descomprimido con éxito.")
-    except Exception as e:
-        logger.error(f"Error al descomprimir {LURAPH15_ZIP}: {e}")
-
-# 2. Verificar si ya existen los binarios compilados de Luau; si no, ejecutar build_luau.py una sola vez
-bin_luau_exists = find_file_recursively("luau")
-bin_luau_ast_exists = find_file_recursively("luau-ast")
-
-if not (bin_luau_exists and bin_luau_ast_exists):
-    build_script = find_file_recursively("build_luau.py")
-    if build_script:
-        logger.info(f"Binarios no encontrados. Ejecutando {build_script}...")
-        try:
-            subprocess.run([sys.executable, os.path.basename(build_script)], cwd=os.path.dirname(build_script), check=False)
-        except Exception as e:
-            logger.warning(f"Aviso al ejecutar script de compilación: {e}")
-
-# 3. Aplicar permisos de ejecución a los binarios
+# 2. Aplicar permisos de ejecución a binarios necesarios
 make_all_binaries_executable()
 
 if os.path.isdir(GOOFY_ENGINES):
@@ -284,7 +260,7 @@ class Detector:
             moon_ev.append("Constantes cifradas de MoonSec V3 (\\4\\8)")
         findings.append(Finding("moonsec", "MoonSec V3", moon_score, moon_ev))
 
-        # 4. Luraph v15 / v15.1
+        # 4. Luraph v15 / v15.1 (Ambos usan el motor unificado v15.1)
         lur_score = 0.0
         lur_ev = []
         lur_hint = ""
@@ -303,11 +279,12 @@ class Detector:
         if m:
             lur_hint = f"{m.group(1)}.{m.group(2)}"
         
-        label = "Luraph v15"
-        if lur_hint == "15.1":
-            label = "Luraph v15.1"
-        elif lur_hint.startswith("15"):
+        label = "Luraph v15.1"
+        if lur_hint == "15.0":
             label = "Luraph v15"
+        elif lur_hint == "15.1":
+            label = "Luraph v15.1"
+            
         findings.append(Finding("luraph", label, lur_score, lur_ev, lur_hint))
 
         # 5. IronBrew 1
@@ -434,7 +411,7 @@ async def engine_luraph151(code, uid, timeout):
         with open(input_file, "w", encoding="utf-8") as f:
             f.write(code)
         deadline = asyncio.get_running_loop().time() + timeout
-        stdout, _ = await run_stage([node_bin, tool, input_file, output_file], deadline, "Luraph v15.1", check=False)
+        stdout, _ = await run_stage([node_bin, tool, input_file, output_file], deadline, "Luraph v15/v15.1", check=False)
 
         raw_out = stdout.decode("utf-8", "replace").strip()
         try:
@@ -591,42 +568,8 @@ async def engine_goofy(code, uid, timeout):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-async def engine_luraph15(code, uid, timeout):
-    missing = []
-    script_path = find_file_recursively("deob.py")
-    if not script_path:
-        missing.append(f"archivos de `{LURAPH15_ZIP}`")
-    
-    bin_found = any(os.path.isfile(os.path.join(root, exe)) for root, dirs, files in os.walk(".") for exe in ("luau", "luau-ast") if exe in files)
-    if not bin_found:
-        missing.append("binarios Linux `luau` / `luau-ast`")
-
-    if missing:
-        raise MissingDependency(", ".join(missing))
-
-    work_dir = tempfile.mkdtemp(prefix=f"lph15_{uid}_")
-    try:
-        input_file = os.path.join(work_dir, "input.lua")
-        output_file = os.path.join(work_dir, "output.lua")
-        with open(input_file, "w", encoding="utf-8") as f:
-            f.write(code)
-
-        deadline = asyncio.get_running_loop().time() + timeout
-        await run_stage(
-            [sys.executable, os.path.abspath(script_path), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
-            deadline, "Luraph v15", cwd=os.path.dirname(script_path)
-        )
-        if not os.path.isfile(output_file):
-            raise DeobfError("El desofuscador no generó resultado.")
-        with open(output_file, "r", encoding="utf-8", errors="ignore") as f:
-            result_code = f.read()
-        return result_code.strip()
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-
-
 ENGINES = {
-    "luraph15":   {"label": "Luraph v15",   "family": "luraph",     "fn": engine_luraph15,   "title": "LURAPH V15 DEOBFUSCATED", "wait": "Devirtualizando Luraph v15..."},
+    "luraph15":   {"label": "Luraph v15",   "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15 DEOBFUSCATED", "wait": "Devirtualizando Luraph v15..."},
     "luraph151":  {"label": "Luraph v15.1", "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15.1 DEOBFUSCATED", "wait": "Procesando Luraph v15.1..."},
     "prometheus": {"label": "Prometheus",   "family": "prometheus", "fn": engine_prometheus, "title": "PROMETHEUS DEOBFUSCATED", "wait": "Desofuscando Prometheus..."},
     "moonsec":    {"label": "MoonSec V3",   "family": "moonsec",    "fn": engine_moonsec,    "title": "MOONSEC V3 DEOBFUSCATED", "wait": "Devirtualizando MoonSec V3..."},
@@ -634,7 +577,7 @@ ENGINES = {
 }
 
 FAMILY_ENGINES = {
-    "luraph": ["luraph15", "luraph151"],
+    "luraph": ["luraph151", "luraph15"],
     "prometheus": ["prometheus"],
     "moonsec": ["moonsec"],
     "goofy": ["goofy"],
