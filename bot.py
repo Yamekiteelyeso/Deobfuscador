@@ -458,7 +458,7 @@ async def engine_prometheus(code, uid, timeout):
         _remove(input_file, output_file)
 
 
-async def engine_moonveil(code, uid, timeout):
+async def engine_moonsec(code, uid, timeout):
     dotnet_bin = shutil.which("dotnet") or os.path.expanduser("~/.dotnet/dotnet")
     java_bin = os.getenv("MOONSEC_JAVA") or shutil.which("java")
     missing = []
@@ -595,14 +595,14 @@ ENGINES = {
     "luraph15":   {"label": "Luraph v15",   "family": "luraph",     "fn": engine_luraph15,   "title": "LURAPH V15 DEOBFUSCATED", "wait": "Devirtualizando Luraph v15..."},
     "luraph151":  {"label": "Luraph v15.1", "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15.1 DEOBFUSCATED", "wait": "Procesando Luraph v15.1..."},
     "prometheus": {"label": "Prometheus",   "family": "prometheus", "fn": engine_prometheus, "title": "PROMETHEUS DEOBFUSCATED", "wait": "Desofuscando Prometheus..."},
-    "moonveil":   {"label": "MoonSec V3",   "family": "moonsec",    "fn": engine_moonveil,   "title": "MOONSEC V3 DEOBFUSCATED", "wait": "Devirtualizando MoonSec V3..."},
+    "moonsec":    {"label": "MoonSec V3",   "family": "moonsec",    "fn": engine_moonsec,    "title": "MOONSEC V3 DEOBFUSCATED", "wait": "Devirtualizando MoonSec V3..."},
     "goofy":      {"label": "Goofyscator",  "family": "goofy",      "fn": engine_goofy,      "title": "GOOFYSCATOR V11 DEOBFUSCATED", "wait": "Recuperando Goofyscator V11..."},
 }
 
 FAMILY_ENGINES = {
     "luraph": ["luraph15", "luraph151"],
     "prometheus": ["prometheus"],
-    "moonsec": ["moonveil"],
+    "moonsec": ["moonsec"],
     "goofy": ["goofy"],
 }
 
@@ -882,7 +882,7 @@ async def cmd_list(ctx):
         f"**2. Prometheus {EMOJI_PROMETHEUS} **\n"
         "• Comando: `.prometheus`\n\n"
         "**3. MoonSec V3**\n"
-        "• Comando: `.moonsec` (alias: `.moonveil`, `.msd`)\n\n"
+        "• Comando: `.moonsec` (alias: `.msd`)\n\n"
         "**4. Goofyscator V11**\n"
         "• Comando: `.goofy` (alias: `.goofyscator`, `.gv11d`)"
     )
@@ -1040,9 +1040,9 @@ async def cmd_prometheus(ctx, url: str = None):
     await start_job(ctx, url, "prometheus")
 
 
-@bot.command(name="moonsec", aliases=["moonveil", "msd"])
+@bot.command(name="moonsec", aliases=["msd"])
 async def cmd_moonsec(ctx, url: str = None):
-    await start_job(ctx, url, "moonveil")
+    await start_job(ctx, url, "moonsec")
 
 
 @bot.command(name="goofy", aliases=["goofyscator", "gv11d"])
