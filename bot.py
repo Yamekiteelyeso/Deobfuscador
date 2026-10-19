@@ -213,7 +213,7 @@ async def get_code_and_source(ctx, url=None):
     raise Exception("No encontré un archivo adjunto, un mensaje respondido con archivo ni una URL válida.")
 
 
-# ==================== DETECTOR DE OFUSCADORES CORREGIDO ====================
+# ==================== DETECTOR DE OFUSCADORES ====================
 @dataclass
 class Finding:
     family: str
@@ -255,7 +255,7 @@ class Detector:
             moon_ev.append("Constantes cifradas de MoonSec V3 (\\4\\8)")
         findings.append(Finding("moonsec", "MoonSec V3", moon_score, moon_ev))
 
-        # 4. Luraph v15 / v15.1 (Estricto para evitar falsos positivos)
+        # 4. Luraph v15 / v15.1
         lur_score = 0.0
         lur_ev = []
         lur_hint = ""
@@ -852,7 +852,7 @@ async def cmd_help(ctx):
         value=(
             "`.luraph` — Luraph v15 / v15.1\n"
             "`.prometheus` — Prometheus\n"
-            "`.moonveil` — MoonSec V3\n"
+            "`.moonsec` — MoonSec V3\n"
             "`.goofy` — Goofyscator V11"
         ),
         inline=False
@@ -882,7 +882,7 @@ async def cmd_list(ctx):
         f"**2. Prometheus {EMOJI_PROMETHEUS} **\n"
         "• Comando: `.prometheus`\n\n"
         "**3. MoonSec V3**\n"
-        "• Comando: `.moonveil` (alias: `.moonsec`, `.msd`)\n\n"
+        "• Comando: `.moonsec` (alias: `.moonveil`, `.msd`)\n\n"
         "**4. Goofyscator V11**\n"
         "• Comando: `.goofy` (alias: `.goofyscator`, `.gv11d`)"
     )
@@ -909,7 +909,6 @@ async def cmd_detect(ctx, url: str = None):
         confidence_pct = int(top.score * 100)
         
         if confidence_pct < 40:
-            # Si no coincide con ninguno con suficiente certeza
             detect_text = (
                 f"# {EMOJI_ERROR} UNKNOWN SCRIPT\n"
                 f"Name: Desconocido / Sin ofuscador reconocido\n"
@@ -1041,8 +1040,8 @@ async def cmd_prometheus(ctx, url: str = None):
     await start_job(ctx, url, "prometheus")
 
 
-@bot.command(name="moonveil", aliases=["moonsec", "msd"])
-async def cmd_moonveil(ctx, url: str = None):
+@bot.command(name="moonsec", aliases=["moonveil", "msd"])
+async def cmd_moonsec(ctx, url: str = None):
     await start_job(ctx, url, "moonveil")
 
 
