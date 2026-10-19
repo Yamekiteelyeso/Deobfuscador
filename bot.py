@@ -57,13 +57,11 @@ MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
 LURAPH15_ZIP = "luraphv15.zip"
 LURAPH15_DIR = "Deobfuscator"
-LURAPH15_BIN = os.path.join(LURAPH15_DIR, "deobf", "bin")
 LURAPH15_SCRIPT = os.path.join(LURAPH15_DIR, "deobf", "deob.py")
 
 GOOFY_ZIP = "goofyscator-deobf.zip"
 GOOFY_DIR = "goofyscator-deobf"
 GOOFY_ENGINES = os.path.join(GOOFY_DIR, "engines")
-GOOFY_BIN = os.path.join(GOOFY_ENGINES, "deobfuscator", "deobf", "bin")
 GOOFY_BANNER = re.compile(r"^--[^\n]*protected by goofyscator V11 BETA-1\b", re.I)
 
 
@@ -78,25 +76,31 @@ def extract_zip(zip_path, marker_dir, target="."):
             logger.error(f"Error al descomprimir {zip_path}: {e}")
 
 
-def chmod_exec(folder, names):
-    for name in names:
-        p = os.path.join(folder, name)
-        if os.path.isfile(p):
-            try:
-                os.chmod(p, 0o755)
-            except Exception as e:
-                logger.error(f"No se pudo dar permisos a {p}: {e}")
+def make_all_binaries_executable():
+    binarios_necesarios = {"luau", "luau-ast"}
+    logger.info("Aplicando permisos de ejecución a binarios de Linux...")
+    for root, dirs, files in os.walk("."):
+        for file in files:
+            if file in binarios_necesarios:
+                p = os.path.join(root, file)
+                try:
+                    os.chmod(p, 0o755)
+                    logger.info(f"Permisos de ejecución otorgados a: {p}")
+                except Exception as e:
+                    logger.error(f"No se pudo dar permisos a {p}: {e}")
 
 
+# Descomprimir herramientas
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_DIR)
 extract_zip(LURAPH15_ZIP, LURAPH15_DIR)
 
-chmod_exec(LURAPH15_BIN, ("luau", "luau-ast"))
+# Dar permisos automáticamente a cualquier binario luau o luau-ast en el proyecto
+make_all_binaries_executable()
+
 if os.path.isdir(GOOFY_ENGINES):
-    chmod_exec(GOOFY_BIN, ("luau", "luau-ast"))
     try:
         _pkg = os.path.join(GOOFY_ENGINES, "package.json")
         if not os.path.exists(_pkg):
@@ -521,9 +525,12 @@ async def engine_goofy(code, uid, timeout):
         missing.append(f"archivos de `{GOOFY_ZIP}`")
     if not tsx_cmd:
         missing.append("Node.js + `tsx`")
-    for exe in ("luau", "luau-ast"):
-        if not os.path.isfile(os.path.join(GOOFY_BIN, exe)):
-            missing.append(f"binario Linux `{exe}`")
+    
+    # Verificar si existen los binarios en cualquier parte del proyecto gracias a make_all_binaries_executable
+    bin_found = any(os.path.isfile(os.path.join(root, exe)) for root, dirs, files in os.walk(".") for exe in ("luau", "luau-ast") if exe in files)
+    if not bin_found:
+        missing.append("binarios Linux `luau` / `luau-ast`")
+
     if missing:
         raise MissingDependency(", ".join(missing))
 
@@ -564,9 +571,11 @@ async def engine_luraph15(code, uid, timeout):
     missing = []
     if not os.path.isfile(LURAPH15_SCRIPT):
         missing.append(f"archivos de `{LURAPH15_ZIP}`")
-    for exe in ("luau", "luau-ast"):
-        if not os.path.isfile(os.path.join(LURAPH15_BIN, exe)):
-            missing.append(f"binario Linux `{exe}`")
+    
+    bin_found = any(os.path.isfile(os.path.join(root, exe)) for root, dirs, files in os.walk(".") for exe in ("luau", "luau-ast") if exe in files)
+    if not bin_found:
+        missing.append("binarios Linux `luau` / `luau-ast`")
+
     if missing:
         raise MissingDependency(", ".join(missing))
 
