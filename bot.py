@@ -26,7 +26,7 @@ logger = logging.getLogger("LexyHubBot")
 # ==================== EMOJIS ====================
 EMOJI_LOADING = "<a:loading:1561435149793493166>"
 EMOJI_CORRECT = "<:correct:1561435171385909288>"
-EMOJI_ERROR = "<:error:1561510204393136209>"
+EMOJI_ERROR = "<:incorrect:1561436020766146590>"
 
 # ==================== CONFIGURACIÓN (se puede cambiar con variables de entorno) ====================
 def _env_int(name, default):
@@ -235,7 +235,7 @@ FAMILY_LABEL = {
     "goofy": "Goofyscator V11",
     "ironbrew": "IronBrew 1",
 }
-CONFIDENT = 0.5   # a partir de aquí se considera identificado
+CONFIDENT = 0.5   # requiere evidencia estructural suficiente
 
 # Luraph v15: VM con árbol de despacho binario, `continue` de Luau, métodos de 1-2 letras (K:A(...))
 LUR_TREE = re.compile(r"\b[A-Za-z_]\w*\s*<=\s*\d+\s+then\s+if\s+[A-Za-z_]\w*\s*<=\s*\d+\s+then")
@@ -315,8 +315,11 @@ class Detector:
     @staticmethod
     def _goofy(s):
         score, ev = 0.0, []
-        if "limitedstack" in s:
-            score += 0.40; ev.append("string interno `limitedstack` del runtime")
+        low = s.lower()
+        if "limitedstack" in low:
+            score += 0.45; ev.append("string interno `limitedstack` del runtime")
+        if "goofyscator" in low and "v11" in low:
+            score += 0.35; ev.append("identificador explícito de Goofyscator V11")
         if "cannot change environment" in s:
             score += 0.15; ev.append("mensaje `cannot change environment`")
         if ("__newindex" in s and "__pairs" in s) or ('"newindex"' in s and '"pairs"' in s):
@@ -343,7 +346,7 @@ class Detector:
         score, ev = 0.0, []
         marks = s[:4000].lower() + " " + s[-1500:].lower()
         if "prometheus" in marks or "levno" in marks:
-            score += 0.75; ev.append("marca de agua de Prometheus en el script")
+            score += 0.80; ev.append("marca de agua de Prometheus en el script")
         # Sin marca de agua, solo hay pistas débiles (nunca llegan al umbral por sí solas).
         if PROM_WRAP.match(s[:3000]):
             score += 0.15; ev.append("envoltorio `return(function(...)`")
@@ -921,8 +924,13 @@ async def execute_plan(ctx, msg, code, source_link, input_size, plan, detected_l
                 pass
         return
 
-    lines = "\n".join(f"**{name}:** {reason.replace(chr(10), ' ')[:140]}" for name, reason in failures)
-    await safe_edit(msg, ui_error("No se pudo desofuscar", f"Detectado: **{detected_label}**\n{lines}"))
+    await safe_edit(
+        msg,
+        discord.Embed(
+            description="## <:incorrect:1561436020766146590> ERROR AL DEOBFUSCAR\\nNO SE SOPORTA EL OBFUSCADOR",
+            color=discord.Color.red()
+        )
+    )
 
 
 async def run_job(ctx, msg, code, source_link, input_size, mode, key=None):
@@ -1068,39 +1076,33 @@ async def cmd_detect(ctx, url: str = None):
         code, source_link, input_size = await get_code_and_source(ctx, url)
         if not code.strip():
             raise Exception("El archivo está vacío.")
+
         findings = await asyncio.to_thread(Detector.scan, code)
         top = findings[0]
-        size_line = f"-# size: {format_size(input_size)} · Source: {source_link}"
-
         if top.score >= CONFIDENT:
-            evidence = "\n".join(f"· {e}" for e in top.evidence[:5])
-            if top.family in FAMILY_ENGINES and FAMILY_ENGINES[top.family]:
-                cmd = {"luraph": ".luraph", "prometheus": ".prometheus", "moonsec": ".moonveil", "goofy": ".goofy"}[top.family]
-                action = f"**Comando:** `{cmd}` o `.deobf`"
-            else:
-                action = "**Estado:** reconocido, pero el bot no tiene desofuscador para este tipo."
-            others = [f for f in findings[1:] if f.score >= 0.2]
-            others_line = ""
-            if others:
-                others_line = "\n**Otras coincidencias:** " + ", ".join(f"{f.label} {int(f.score * 100)}%" for f in others[:2])
-            body = (
-                f"```ini\n[{top.label}]\n```\n"
-                f"**Confianza:** {int(top.score * 100)}%\n"
-                f"**Lo que vi en el código:**\n{evidence}\n"
-                f"{action}{others_line}\n{size_line}"
-            )
-            await safe_edit(msg, ui_ok("Ofuscador detectado", body))
+            name = top.label
+            version = top.hint or ("V3" if top.family == "moonsec" else
+                                   "V11" if top.family == "goofy" else
+                                   "V1" if top.family == "ironbrew" else "Desconocida")
+            confidence = int(top.score * 100)
+            detected_link = source_link
         else:
-            near = [f for f in findings if f.score > 0][:2]
-            near_line = ""
-            if near:
-                near_line = "**Lo más cercano:** " + ", ".join(f"{f.label} {int(f.score * 100)}%" for f in near) + "\n"
-            body = (
-                f"No encontré la estructura de ningún ofuscador conocido.\n"
-                f"{near_line}"
-                f"Puedes probar `.deobf`: intenta cada desofuscador y solo acepta resultados válidos.\n{size_line}"
-            )
-            await safe_edit(msg, ui_error("No identificado", body))
+            name = "unknow"
+            version = "unknow"
+            confidence = 0
+            detected_link = source_link
+
+        body = (
+            f"Name: {name}\\n"
+            f"Version: {version}\\n"
+            f"Confidence: {confidence}%\\n"
+            f"Detected Link: {detected_link}"
+        )
+        embed = discord.Embed(
+            description=f"## <:correct:1561435171385909288> DETECTED {name.upper()}\\n{body}",
+            color=discord.Color.from_rgb(0, 204, 102) if confidence else discord.Color.dark_grey()
+        )
+        await safe_edit(msg, embed)
     except Exception as e:
         logger.error(f"Error en .detect: {e}", exc_info=True)
         await safe_edit(msg, ui_error("Error", str(e)[:300]))
@@ -1127,16 +1129,24 @@ async def cmd_get(ctx, url: str = None):
         if len(data) > MAX_INPUT_BYTES:
             await safe_edit(msg, ui_error("Muy grande", f"El archivo supera {format_size(MAX_INPUT_BYTES)}."))
             return
-        content = data.decode("utf-8-sig", errors="ignore")
 
-        if len(content) <= 1900:
-            await msg.delete()
-            await ctx.send(f"```lua\n{content.replace('```', chr(39) * 3)}\n```")
-        else:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            await safe_edit(msg, ui_ok("Extraído"))
-            await ctx.send(file=discord.File(path, filename="contenido.lua"))
+        content = data.decode("utf-8-sig", errors="replace")
+        if not content.strip():
+            await safe_edit(msg, ui_error("Error", "El archivo descargado está vacío."))
+            return
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        embed = discord.Embed(
+            description=(
+                "## <:correct:1561435171385909288> SUCCESSFULLY FETCHED\\n"
+                f"Fetched: {url}\\n"
+                "Download Fetched File:"
+            ),
+            color=discord.Color.from_rgb(0, 204, 102)
+        )
+        await safe_edit(msg, embed)
+        await ctx.send(file=discord.File(path, filename=os.path.basename(url.split("?", 1)[0]) or "fetched.lua"))
     except Exception as e:
         await safe_edit(msg, ui_error("Error", str(e)[:300]))
     finally:
