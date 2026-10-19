@@ -58,8 +58,6 @@ MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
 LURAPH15_ZIP = "luraphv15.zip"
 LURAPH15_DIR = "Deobfuscator"
-LURAPH15_SCRIPT = os.path.join(LURAPH15_DIR, "deobf", "deob.py")
-LURAPH15_BUILD = os.path.join(LURAPH15_DIR, "deobf", "build_luau.py")
 
 GOOFY_ZIP = "goofyscator-deobf.zip"
 GOOFY_DIR = "goofyscator-deobf"
@@ -78,6 +76,14 @@ def extract_zip(zip_path, marker_dir, target="."):
             logger.error(f"Error al descomprimir {zip_path}: {e}")
 
 
+def find_file_recursively(filename):
+    """Busca un archivo por su nombre de forma recursiva en todo el directorio del proyecto."""
+    for root, dirs, files in os.walk("."):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
+
+
 def make_all_binaries_executable():
     binarios_necesarios = {"luau", "luau-ast"}
     logger.info("Aplicando permisos de ejecución a binarios de Linux...")
@@ -92,22 +98,34 @@ def make_all_binaries_executable():
                     logger.error(f"No se pudo dar permisos a {p}: {e}")
 
 
-# 1. Descomprimir herramientas de forma limpia
+# 1. Descomprimir herramientas
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
-extract_zip(GOOFY_ZIP, GOOFY_DIR)
-extract_zip(LURAPH15_ZIP, LURAPH15_DIR, LURAPH15_DIR)
+GOOFY_EXTRACTED = os.path.join(GOOFY_DIR, "engines")
+extract_zip(GOOFY_ZIP, GOOFY_EXTRACTED, GOOFY_DIR)
 
-# 2. Intentar compilar si existe el script build_luau.py dentro de Deobfuscator
-if os.path.isfile(LURAPH15_BUILD):
+# Descomprimir Luraph v15 asegurando que se cree la carpeta destino
+if os.path.exists(LURAPH15_ZIP) and not find_file_recursively("deob.py"):
+    logger.info(f"Descomprimiendo {LURAPH15_ZIP}...")
     try:
-        logger.info("Ejecutando build_luau.py para asegurar binarios...")
-        subprocess.run([sys.executable, os.path.basename(LURAPH15_BUILD)], cwd=os.path.dirname(LURAPH15_BUILD), check=False)
+        os.makedirs(LURAPH15_DIR, exist_ok=True)
+        with zipfile.ZipFile(LURAPH15_ZIP, "r") as z:
+            z.extractall(LURAPH15_DIR)
+        logger.info(f"{LURAPH15_ZIP} descomprimido con éxito.")
     except Exception as e:
-        logger.warning(f"Aviso en build_luau.py: {e}")
+        logger.error(f"Error al descomprimir {LURAPH15_ZIP}: {e}")
 
-# 3. Dar permisos de ejecución (chmod +x) a todos los binarios encontrados de manera recursiva
+# 2. Ejecutar script de compilación si existe
+build_script = find_file_recursively("build_luau.py")
+if build_script:
+    try:
+        logger.info(f"Ejecutando {build_script} para asegurar binarios...")
+        subprocess.run([sys.executable, os.path.basename(build_script)], cwd=os.path.dirname(build_script), check=False)
+    except Exception as e:
+        logger.warning(f"Aviso al ejecutar script de compilación: {e}")
+
+# 3. Otorgar permisos de ejecución recursivamente a todos los binarios
 make_all_binaries_executable()
 
 if os.path.isdir(GOOFY_ENGINES):
@@ -404,11 +422,11 @@ def _node():
 
 
 async def engine_luraph151(code, uid, timeout):
-    tool = os.path.join(LURAPH_DIR, "v15_tool_attempt_source", "deob.js")
+    tool = find_file_recursively("deob.js")
     node_bin = _node()
     if not node_bin:
         raise MissingDependency("Node.js (`node`)")
-    if not os.path.isfile(tool):
+    if not tool:
         raise MissingDependency(f"archivos de `{LURAPH_ZIP}`")
 
     input_file = f"input_{uid}.lua"
@@ -443,11 +461,11 @@ async def engine_luraph151(code, uid, timeout):
 
 
 async def engine_prometheus(code, uid, timeout):
-    tool = os.path.join(PROM_DIR, "bin", "pdeobf.js")
+    tool = find_file_recursively("pdeobf.js")
     node_bin = _node()
     if not node_bin:
         raise MissingDependency("Node.js (`node`)")
-    if not os.path.isfile(tool):
+    if not tool:
         raise MissingDependency(f"archivos de `{PROM_ZIP}`")
 
     input_file = f"prom_input_{uid}.lua"
@@ -531,7 +549,7 @@ async def engine_goofy(code, uid, timeout):
 
     tsx_cmd = resolve_tsx()
     missing = []
-    if not os.path.isfile(os.path.join(GOOFY_ENGINES, "goofyscator", "cli.mjs")):
+    if not find_file_recursively("cli.mjs"):
         missing.append(f"archivos de `{GOOFY_ZIP}`")
     if not tsx_cmd:
         missing.append("Node.js + `tsx`")
@@ -554,9 +572,9 @@ async def engine_goofy(code, uid, timeout):
             f.write(code)
 
         deadline = asyncio.get_running_loop().time() + timeout
-        cli = os.path.abspath(os.path.join(GOOFY_ENGINES, "goofyscator", "cli.mjs"))
+        cli = find_file_recursively("cli.mjs")
         stdout, stderr = await run_stage(
-            tsx_cmd + [cli, os.path.abspath(input_file), os.path.abspath(analysis_file)],
+            tsx_cmd + [os.path.abspath(cli), os.path.abspath(input_file), os.path.abspath(analysis_file)],
             deadline, "Goofyscator", cwd=GOOFY_ENGINES, check=False
         )
         try:
@@ -578,7 +596,8 @@ async def engine_goofy(code, uid, timeout):
 
 async def engine_luraph15(code, uid, timeout):
     missing = []
-    if not os.path.isfile(LURAPH15_SCRIPT):
+    script_path = find_file_recursively("deob.py")
+    if not script_path:
         missing.append(f"archivos de `{LURAPH15_ZIP}`")
     
     bin_found = any(os.path.isfile(os.path.join(root, exe)) for root, dirs, files in os.walk(".") for exe in ("luau", "luau-ast") if exe in files)
@@ -597,8 +616,8 @@ async def engine_luraph15(code, uid, timeout):
 
         deadline = asyncio.get_running_loop().time() + timeout
         await run_stage(
-            [sys.executable, os.path.abspath(LURAPH15_SCRIPT), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
-            deadline, "Luraph v15", cwd=os.path.dirname(LURAPH15_SCRIPT)
+            [sys.executable, os.path.abspath(script_path), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
+            deadline, "Luraph v15", cwd=os.path.dirname(script_path)
         )
         if not os.path.isfile(output_file):
             raise DeobfError("El desofuscador no generó resultado.")
