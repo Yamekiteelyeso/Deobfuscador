@@ -1,7 +1,7 @@
-# Usar una imagen oficial de Linux que tenga Python preinstalado
+# Usar una imagen oficial de Linux con Python preinstalado
 FROM python:3.11-slim
 
-# Instalar Node.js, npm, Java (necesario para MoonSec) y herramientas del sistema
+# Instalar dependencias del sistema operativo (Node.js, npm, Java, wget, curl, unzip)
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -19,18 +19,18 @@ RUN wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh \
     && ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet \
     && rm dotnet-install.sh
 
-# Establecer directorio de trabajo
+# Establecer el directorio de trabajo
 WORKDIR /app
 
-# Copiar los archivos del proyecto
+# Copiar todos los archivos del proyecto al contenedor
 COPY . /app
 
-# Instalar las dependencias de Python
+# Instalar las dependencias de Python desde requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Dar permisos de ejecución automáticos a los binarios de Luau (crucial para Luraph y Goofyscator)
 RUN find . -name "luau" -type f -exec chmod +x {} \;
 RUN find . -name "luau-ast" -type f -exec chmod +x {} \;
 
-# Comando para arrancar el bot
+# Comando para arrancar el bot de Discord
 CMD ["python", "bot.py"]
