@@ -1093,13 +1093,13 @@ async def cmd_detect(ctx, url: str = None):
             detected_link = source_link
 
         body = (
-            f"Name: {name}\\n"
-            f"Version: {version}\\n"
-            f"Confidence: {confidence}%\\n"
+            f"Name: {name}\n"
+            f"Version: {version}\n"
+            f"Confidence: {confidence}%\n"
             f"Detected Link: {detected_link}"
         )
         embed = discord.Embed(
-            description=f"## <:correct:1561435171385909288> DETECTED {name.upper()}\\n{body}",
+            description=f"## <:correct:1561435171385909288> DETECTED {name.upper()}\n{body}",
             color=discord.Color.from_rgb(0, 204, 102) if confidence else discord.Color.dark_grey()
         )
         await safe_edit(msg, embed)
