@@ -26,7 +26,7 @@ logger = logging.getLogger("LexyHubBot")
 
 # ==================== EMOJIS ====================
 EMOJI_LOADING = "<a:loading:1561435149793493166>"
-EMOJI_CORRECT = "<:correct:1561435171385909288>"
+EMOJI_CORRECT = "<:correct:1561510204393136209>"
 EMOJI_ERROR = "<:error:1561510204393136209>"
 EMOJI_LIST = "<:list:1561778149514149888>"
 EMOJI_LURAPH = "<:luraph:1561779566635126845>"
@@ -77,7 +77,6 @@ def extract_zip(zip_path, marker_dir, target="."):
 
 
 def find_file_recursively(filename):
-    """Busca un archivo por su nombre de forma recursiva en todo el directorio del proyecto."""
     for root, dirs, files in os.walk("."):
         if filename in files:
             return os.path.join(root, filename)
@@ -86,27 +85,23 @@ def find_file_recursively(filename):
 
 def make_all_binaries_executable():
     binarios_necesarios = {"luau", "luau-ast"}
-    logger.info("Aplicando permisos de ejecución a binarios de Linux...")
     for root, dirs, files in os.walk("."):
         for file in files:
             if file in binarios_necesarios:
                 p = os.path.join(root, file)
                 try:
                     os.chmod(p, 0o755)
-                    logger.info(f"Permisos de ejecución otorgados a: {p}")
-                except Exception as e:
-                    logger.error(f"No se pudo dar permisos a {p}: {e}")
+                except Exception:
+                    pass
 
 
-# 1. Descomprimir herramientas
+# 1. Descomprimir todas las herramientas una sola vez
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
-GOOFY_EXTRACTED = os.path.join(GOOFY_DIR, "engines")
-extract_zip(GOOFY_ZIP, GOOFY_EXTRACTED, GOOFY_DIR)
+extract_zip(GOOFY_ZIP, GOOFY_ENGINES, GOOFY_DIR)
 
-# Descomprimir Luraph v15 asegurando que se cree la carpeta destino
-if os.path.exists(LURAPH15_ZIP) and not find_file_recursively("deob.py"):
+if os.path.exists(LURAPH15_ZIP) and not os.path.exists(LURAPH15_DIR):
     logger.info(f"Descomprimiendo {LURAPH15_ZIP}...")
     try:
         os.makedirs(LURAPH15_DIR, exist_ok=True)
@@ -116,16 +111,20 @@ if os.path.exists(LURAPH15_ZIP) and not find_file_recursively("deob.py"):
     except Exception as e:
         logger.error(f"Error al descomprimir {LURAPH15_ZIP}: {e}")
 
-# 2. Ejecutar script de compilación si existe
-build_script = find_file_recursively("build_luau.py")
-if build_script:
-    try:
-        logger.info(f"Ejecutando {build_script} para asegurar binarios...")
-        subprocess.run([sys.executable, os.path.basename(build_script)], cwd=os.path.dirname(build_script), check=False)
-    except Exception as e:
-        logger.warning(f"Aviso al ejecutar script de compilación: {e}")
+# 2. Verificar si ya existen los binarios compilados de Luau; si no, ejecutar build_luau.py una sola vez
+bin_luau_exists = find_file_recursively("luau")
+bin_luau_ast_exists = find_file_recursively("luau-ast")
 
-# 3. Otorgar permisos de ejecución recursivamente a todos los binarios
+if not (bin_luau_exists and bin_luau_ast_exists):
+    build_script = find_file_recursively("build_luau.py")
+    if build_script:
+        logger.info(f"Binarios no encontrados. Ejecutando {build_script}...")
+        try:
+            subprocess.run([sys.executable, os.path.basename(build_script)], cwd=os.path.dirname(build_script), check=False)
+        except Exception as e:
+            logger.warning(f"Aviso al ejecutar script de compilación: {e}")
+
+# 3. Aplicar permisos de ejecución a los binarios
 make_all_binaries_executable()
 
 if os.path.isdir(GOOFY_ENGINES):
