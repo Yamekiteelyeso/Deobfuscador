@@ -409,7 +409,7 @@ class LuauOptimizer:
         return "\n".join(formatted)
 
 
-# ==================== MOTORES DE DESOFUSCACIÓN MEJORADOS ====================
+# ==================== MOTORES DE DESOFUSCACIÓN ====================
 class DeobfError(Exception):
     head = "Fallo"
 
@@ -462,7 +462,6 @@ def _node():
     return shutil.which("node") or shutil.which("nodejs")
 
 
-# --- Motor Luraph v15.1 (Optimizado) ---
 async def engine_luraph151(code, uid, timeout):
     tool = os.path.join(LURAPH_DIR, "v15_tool_attempt_source", "deob.js")
     node_bin = _node()
@@ -502,7 +501,6 @@ async def engine_luraph151(code, uid, timeout):
         _remove(input_file, output_file, json_path, expected_path)
 
 
-# --- Motor Luraph v15 (Python script backend mejorado y ultra robusto) ---
 async def engine_luraph15(code, uid, timeout):
     if not os.path.isfile(LURAPH15_SCRIPT):
         raise MissingDependency(f"archivos de `{LURAPH15_ZIP}` en `{LURAPH15_DIR}`")
@@ -521,7 +519,6 @@ async def engine_luraph15(code, uid, timeout):
 
         deadline = asyncio.get_running_loop().time() + timeout
         
-        # Ejecución robusta de deob.py con argumentos completos
         await run_stage(
             [sys.executable, os.path.abspath(LURAPH15_SCRIPT), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
             deadline, "Luraph v15", cwd=LURAPH15_DIR
@@ -970,7 +967,7 @@ async def cmd_queue(ctx):
     await ctx.send(embed=embed)
 
 
-# --- FORMATO EXACTO SOLICITADO PARA .detect ---
+# --- FORMATO CON LÍNEAS DIVISORIAS EXACTO PARA .detect ---
 @bot.command(name="detect")
 async def cmd_detect(ctx, url: str = None):
     msg = await ctx.send(embed=ui_loading("Analizando", "Ejecutando escaneo exhaustivo..."))
@@ -995,9 +992,11 @@ async def cmd_detect(ctx, url: str = None):
 
         embed_desc = (
             f"# {EMOJI_CORRECT} DETECTED {header_name}\n"
+            f"---\n"
             f"Name: {name_str}\n"
             f"Version: {version_str}\n"
             f"Confidence: {conf_str}\n"
+            f"---\n"
             f"Detected Link: {source_link}"
         )
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
@@ -1006,16 +1005,18 @@ async def cmd_detect(ctx, url: str = None):
         logger.error(f"Error en .detect: {e}", exc_info=True)
         embed_desc = (
             f"# {EMOJI_ERROR} DETECTED UNKNOW\n"
+            f"---\n"
             f"Name: unknow\n"
             f"Version: unknow\n"
             f"Confidence: 0%\n"
+            f"---\n"
             f"Detected Link: {url or 'None'}"
         )
         embed = discord.Embed(description=embed_desc, color=discord.Color.red())
         await safe_edit(msg, embed)
 
 
-# --- FORMATO EXACTO SOLICITADO PARA .get ---
+# --- FORMATO CON LÍNEAS DIVISORIAS EXACTO PARA .get (Basado en la imagen) ---
 @bot.command(name="get")
 async def cmd_get(ctx, url: str = None):
     if not url:
@@ -1043,8 +1044,12 @@ async def cmd_get(ctx, url: str = None):
             f.write(content)
 
         embed_desc = (
-            f"# {EMOJI_CORRECT}  SUCCESSFULLY FETCHED\n"
-            f"Fetched: {url}\n"
+            f"# {EMOJI_CORRECT} SUCCESSFULLY\n"
+            f"FETCHED\n"
+            f"---\n"
+            f"Fetched:\n"
+            f"{url}\n"
+            f"---\n"
             f"Download Fetched File:"
         )
         embed = discord.Embed(description=embed_desc, color=discord.Color.from_rgb(0, 204, 102))
