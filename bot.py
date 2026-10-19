@@ -927,7 +927,7 @@ async def execute_plan(ctx, msg, code, source_link, input_size, plan, detected_l
     await safe_edit(
         msg,
         discord.Embed(
-            description="## <:incorrect:1561436020766146590> ERROR AL DEOBFUSCAR\\nNO SE SOPORTA EL OBFUSCADOR",
+            description="# <:incorrect:1561436020766146590> ERROR AL DEOBFUSCAR\nNO SE SOPORTA EL OBFUSCADOR",
             color=discord.Color.red()
         )
     )
@@ -1099,7 +1099,7 @@ async def cmd_detect(ctx, url: str = None):
             f"Detected Link: {detected_link}"
         )
         embed = discord.Embed(
-            description=f"## <:correct:1561435171385909288> DETECTED {name.upper()}\n{body}",
+            description=f"# <:correct:1561435171385909288> DETECTED {name.upper()}\n\n{body.replace(chr(10), chr(10) + chr(10))}",
             color=discord.Color.from_rgb(0, 204, 102) if confidence else discord.Color.dark_grey()
         )
         await safe_edit(msg, embed)
@@ -1139,9 +1139,9 @@ async def cmd_get(ctx, url: str = None):
             f.write(content)
         embed = discord.Embed(
             description=(
-                "## <:correct:1561435171385909288> SUCCESSFULLY FETCHED\\n"
-                f"Fetched: {url}\\n"
-                "Download Fetched File:"
+                "# <:correct:1561435171385909288> SUCCESSFULLY FETCHED\n\n"
+                f"📥 **Fetched:**\n{url}\n\n"
+                "\n\n📄 **Download Fetched File:**"
             ),
             color=discord.Color.from_rgb(0, 204, 102)
         )
