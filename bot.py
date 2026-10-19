@@ -58,7 +58,6 @@ MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
 LURAPH15_ZIP = "luraphv15.zip"
 LURAPH15_DIR = "Deobfuscator"
-LURAPH15_BIN = os.path.join(LURAPH15_DIR, "deobf", "bin")
 LURAPH15_SCRIPT = os.path.join(LURAPH15_DIR, "deobf", "deob.py")
 LURAPH15_BUILD = os.path.join(LURAPH15_DIR, "deobf", "build_luau.py")
 
@@ -93,27 +92,22 @@ def make_all_binaries_executable():
                     logger.error(f"No se pudo dar permisos a {p}: {e}")
 
 
-# 1. Descomprimir herramientas iniciales (Corregido el destino de luraphv15.zip para evitar duplicar carpetas)
+# 1. Descomprimir herramientas de forma limpia
 extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_DIR)
-extract_zip(LURAPH15_ZIP, LURAPH15_BIN, ".")  # Extrae directamente manteniendo la ruta limpia
+extract_zip(LURAPH15_ZIP, LURAPH15_DIR, LURAPH15_DIR)
 
-# 2. Si faltan los binarios de Luraph 15, ejecutar el script de compilación interno
-luau_bin_path = os.path.join(LURAPH15_BIN, "luau")
-luau_ast_path = os.path.join(LURAPH15_BIN, "luau-ast")
+# 2. Intentar compilar si existe el script build_luau.py dentro de Deobfuscator
+if os.path.isfile(LURAPH15_BUILD):
+    try:
+        logger.info("Ejecutando build_luau.py para asegurar binarios...")
+        subprocess.run([sys.executable, os.path.basename(LURAPH15_BUILD)], cwd=os.path.dirname(LURAPH15_BUILD), check=False)
+    except Exception as e:
+        logger.warning(f"Aviso en build_luau.py: {e}")
 
-if not (os.path.isfile(luau_bin_path) and os.path.isfile(luau_ast_path)):
-    if os.path.isfile(LURAPH15_BUILD):
-        logger.info("Binarios de Luraph 15 no encontrados. Ejecutando build_luau.py...")
-        try:
-            subprocess.run([sys.executable, os.path.basename(LURAPH15_BUILD)], cwd=os.path.dirname(LURAPH15_BUILD), check=True)
-            logger.info("build_luau.py ejecutado correctamente.")
-        except Exception as e:
-            logger.error(f"Error al ejecutar build_luau.py: {e}")
-
-# 3. Otorgar permisos de ejecución a todos los binarios encontrados de manera recursiva
+# 3. Dar permisos de ejecución (chmod +x) a todos los binarios encontrados de manera recursiva
 make_all_binaries_executable()
 
 if os.path.isdir(GOOFY_ENGINES):
@@ -604,7 +598,7 @@ async def engine_luraph15(code, uid, timeout):
         deadline = asyncio.get_running_loop().time() + timeout
         await run_stage(
             [sys.executable, os.path.abspath(LURAPH15_SCRIPT), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
-            deadline, "Luraph v15", cwd=LURAPH15_DIR
+            deadline, "Luraph v15", cwd=os.path.dirname(LURAPH15_SCRIPT)
         )
         if not os.path.isfile(output_file):
             raise DeobfError("El desofuscador no generó resultado.")
