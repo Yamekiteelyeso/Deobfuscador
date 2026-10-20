@@ -262,13 +262,29 @@ async def on_ready():
 
 
 @bot.event
+async def on_message(message):
+    """Registra cada comando recibido y luego lo procesa (al sobrescribir on_message hay que hacerlo)."""
+    if message.author.bot:
+        return
+    if message.content.startswith("."):
+        logger.info(f"Comando de {message.author} en {message.guild or 'DM'}: {message.content[:80]}")
+    await bot.process_commands(message)
+
+
+@bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
     if isinstance(error, commands.CommandOnCooldown):
         await send_embed(ctx, e_err("COOLDOWN", f"Espera {error.retry_after:.0f}s antes de volver a usar este comando."))
         return
-    logger.error(f"Error en comando {getattr(ctx.command, 'name', '?')}: {error}")
+    original = getattr(error, "original", error)
+    logger.error(f"Error en comando {getattr(ctx.command, 'name', '?')}: {original}", exc_info=original)
+    # Que el usuario siempre vea un mensaje, aunque el error no esté controlado.
+    try:
+        await send_embed(ctx, e_err("ERROR", f"```{str(original)[:300]}```"))
+    except Exception as e:
+        logger.error(f"No pude avisar el error al usuario: {e}")
 
 
 # ============================================================================
@@ -2327,6 +2343,14 @@ async def start_job(ctx, arg, mode, key=None):
 # ============================================================================
 # COMANDOS: información
 # ============================================================================
+@bot.command(name="ping")
+async def cmd_ping(ctx):
+    """Prueba de vida: si responde, el bot y los comandos funcionan."""
+    raw = getattr(bot, "latency", float("nan"))
+    latency = raw * 1000 if raw == raw else 0      # NaN si aún no hay conexión
+    await send_embed(ctx, e_ok("PONG", f"Latency: {latency:.0f} ms\nUptime: {format_duration(time.time() - STATS['started'])}"))
+
+
 @bot.command(name="help")
 async def cmd_help(ctx):
     body = (
@@ -2466,31 +2490,4 @@ async def cmd_beautify(ctx, *, arg: str = None):
         result = await run_cpu(format_lua, src.text)
 
         with open(path, "w", encoding="utf-8") as f:
-            f.write(result.text)
-        lines_before = src.text.count("\n") + 1
-        lines_after = result.text.count("\n")
-        check = "tokens identical" if result.mode == "full" else "basic formatting only"
-        body = (
-            f"Time: {format_duration(time.time() - start_time)}\n"
-            f"Lines: {lines_before:,} → {lines_after:,}\n"
-            f"Size: {format_size(src.size)} → {format_size(os.path.getsize(path))}\n"
-            f"Check: {check}"
-        )
-        if result.note:
-            body += f"\nNote: {result.note}"
-        body += "\n\nDownload Beautified File:"
-        try:
-            await msg.delete()
-        except Exception:
-            pass
-        await send_embed(ctx, e_ok("SUCCESSFULLY BEAUTIFIED", body))
-        await send_file(ctx, path, "beautified.lua")
-    except InputError as e:
-        await safe_edit(msg, e_err("INVALID INPUT", str(e)[:400]))
-    except Exception as e:
-        logger.error(f"Error en .beautify: {e}", exc_info=True)
-        await safe_edit(msg, e_err("ERROR", f"```{str(e)[:300]}```"))
-    finally:
-        _remove(path)
-
-
+            f.wr
