@@ -100,6 +100,13 @@ MOON_DLL = os.path.join(MOON_DIR, "bin", "Release", "net9.0", "MoonsecDeobfuscat
 MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
 
+IB2_ZIP = "ironbrew2.zip"                      # IronBrew 2 (.NET 9 + descompilador Oracle)
+IB2_DIR = "ib2bot-main"
+IB2_WORK = os.path.join(IB2_DIR, "ib2deobf")
+IB2_TOOL = os.path.join(IB2_WORK, "LuaAnalysis.Ironbrew2.dll")
+ORACLE_KEY = os.getenv("ORACLE", "").strip()   # clave del descompilador (variable de entorno)
+ORACLE_URL = os.getenv("ORACLE_URL", "https://oracle.mshq.dev/decompile").strip()
+
 GOOFY_ZIP = "goofyscator-deobf.zip"
 GOOFY_DIR = "goofyscator-deobf"
 GOOFY_ENGINES = os.path.join(GOOFY_DIR, "engines")
@@ -117,6 +124,29 @@ def extract_zip(zip_path, marker_dir, target="."):
             logger.info(f"{zip_path} descomprimido con éxito.")
         except Exception as e:
             logger.error(f"Error al descomprimir {zip_path}: {e}")
+
+
+def extract_ib2():
+    """Extrae solo ib2deobf/ del zip de IronBrew 2. El .env y los archivos de Windows del zip no se extraen."""
+    if not os.path.exists(IB2_ZIP) or os.path.isfile(IB2_TOOL):
+        return
+    logger.info(f"Extrayendo el deobfuscador de IronBrew 2 desde {IB2_ZIP}...")
+    try:
+        prefix = IB2_WORK.replace(os.sep, "/") + "/"
+        with zipfile.ZipFile(IB2_ZIP, "r") as z:
+            for info in z.infolist():
+                name = info.filename.replace("\\", "/")
+                if info.is_dir() or not name.startswith(prefix) or name.endswith(".lnk"):
+                    continue
+                dest = os.path.normpath(name)
+                if not os.path.abspath(dest).startswith(os.path.abspath(IB2_WORK) + os.sep):
+                    continue   # evita rutas que salen de la carpeta
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with z.open(info) as src_f, open(dest, "wb") as out_f:
+                    shutil.copyfileobj(src_f, out_f)
+        logger.info("IronBrew 2 extraído con éxito.")
+    except Exception as e:
+        logger.error(f"Error al extraer {IB2_ZIP}: {e}")
 
 
 def chmod_exec(folder, names):
@@ -192,6 +222,7 @@ extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_DIR)
+extract_ib2()
 
 if os.path.isdir(GOOFY_ENGINES):
     chmod_exec(GOOFY_BIN, ("luau", "luau-ast"))
@@ -1923,7 +1954,74 @@ async def engine_goofy(code, uid, timeout):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def _post_json(url, body, timeout):
+    """POST JSON con la biblioteca estándar. Devuelve (status, texto)."""
+    import urllib.request
+    import urllib.error
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return res.status, res.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+
+
+async def decompile_oracle(bytecode, timeout):
+    """Manda el bytecode (base64) al descompilador Oracle y devuelve el código Lua."""
+    import base64
+    body = {"script": base64.b64encode(bytecode).decode("ascii"), "decompilerOptions": {}}
+    url = f"{ORACLE_URL}?key={ORACLE_KEY}&version=2"     # la clave nunca se muestra en mensajes
+    try:
+        status, text = await asyncio.to_thread(_post_json, url, body, max(10, timeout))
+    except Exception:
+        raise DeobfError("No pude conectar con el descompilador (revisa la conexión o la clave `ORACLE`).")
+    if status != 200:
+        raise DeobfError(f"El descompilador respondió HTTP {status}: {text[:200]}")
+    if not text.strip():
+        raise DeobfError("El descompilador devolvió una salida vacía.")
+    return text
+
+
+async def engine_ironbrew2(raw, uid, timeout):
+    """raw = bytes del archivo de IronBrew 2 (no texto)."""
+    dotnet_bin = shutil.which("dotnet")
+    missing = []
+    if not dotnet_bin:
+        missing.append(".NET 9 runtime (`dotnet`)")
+    if not os.path.isfile(IB2_TOOL):
+        missing.append(f"archivos de `{IB2_ZIP}` (¿está junto al bot?)")
+    if not ORACLE_KEY:
+        missing.append("variable de entorno `ORACLE` (clave del descompilador)")
+    if missing:
+        raise MissingDependency(", ".join(missing))
+
+    name_in = f"ib2_in_{uid}.bin"
+    name_out = f"ib2_out_{uid}.luac"
+    in_path = os.path.join(IB2_WORK, name_in)
+    out_path = os.path.join(IB2_WORK, name_out)
+    try:
+        with open(in_path, "wb") as f:
+            f.write(raw)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        # La herramienta lee y escribe por nombre relativo a su carpeta (igual que el bot original).
+        await run_stage([dotnet_bin, os.path.abspath(IB2_TOOL), name_in, name_out], deadline,
+                        "IronBrew 2", cwd=IB2_WORK, check=True)
+        if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+            raise DeobfError("El deobfuscador no generó bytecode. ¿Es un archivo válido de IronBrew 2?")
+        with open(out_path, "rb") as f:
+            bytecode = f.read()
+        remaining = max(10, deadline - loop.time())
+        code = await decompile_oracle(bytecode, remaining)
+        return post_process_engine_output(code)
+    finally:
+        _remove(in_path, out_path)
+
+
 ENGINES = {
+    "ironbrew2": {"label": "IronBrew 2", "family": "ironbrew2", "fn": engine_ironbrew2, "binary": True,
+                  "title": "IRONBREW 2 DEOBFUSCATED", "wait": "Deobfuscando bytecode y descompilando..."},
     "luraph151":  {"label": "Luraph v15.1", "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15.1 DEOBFUSCATED",
                    "wait": "Procesando capas de virtualización..."},
     "prometheus": {"label": "Prometheus",   "family": "prometheus", "fn": engine_prometheus, "title": "PROMETHEUS DEOBFUSCATED",
@@ -2129,7 +2227,8 @@ async def execute_plan(ctx, msg, code, src, plan, detected_label, start_time):
         step = f" ({i}/{len(plan)})" if len(plan) > 1 else ""
         await safe_edit(msg, e_load(f"DEOBFUSCATING {spec['label'].upper()}{step}", f"{spec['wait']}\nDetected: {detected_label}"))
         try:
-            result = await spec["fn"](code, uid, min(remaining, 300))
+            arg_in = src.raw if spec.get("binary") else code
+            result = await spec["fn"](arg_in, uid, min(remaining, 300))
             ok, why = await run_cpu(validate_result, code, result, spec["family"])
         except DeobfError as e:
             failures.append((spec["label"], str(e)))
@@ -2234,6 +2333,7 @@ async def cmd_help(ctx):
         "Usa los comandos con un archivo adjunto, una URL, un bloque de código o respondiendo a un mensaje.\n\n"
         "**Deobfuscators**\n"
         "• `.luraph`\n"
+        "• `.ironbrew2` (alias `.ib2`)\n"
         "• `.prometheus`\n"
         "• `.moonveil`\n"
         "• `.goofy`\n\n"
@@ -2259,7 +2359,9 @@ async def cmd_list(ctx):
         "**3. MoonSec V3**\n"
         "• Comando: `.moonveil` (alias: `.moonsec`, `.msd`)\n\n"
         "**4. Goofyscator V11**\n"
-        "• Comando: `.goofy` (alias: `.goofyscator`, `.gv11d`)"
+        "• Comando: `.goofy` (alias: `.goofyscator`, `.gv11d`)\n\n"
+        "**5. IronBrew 2**\n"
+        "• Comando: `.ironbrew2` (alias: `.ib2`)"
     )
     await send_embed(ctx, e_list("AVAILABLE DEOBFUSCATORS", body))
 
@@ -2392,40 +2494,3 @@ async def cmd_beautify(ctx, *, arg: str = None):
         _remove(path)
 
 
-# ============================================================================
-# COMANDOS: desofuscadores (todos pasan por la cola)
-# ============================================================================
-@bot.command(name="luraph")
-async def cmd_luraph(ctx, *, arg: str = None):
-    await start_job(ctx, arg, "luraph")
-
-
-@bot.command(name="luraph151")
-async def cmd_luraph151(ctx, *, arg: str = None):
-    await start_job(ctx, arg, "engine", "luraph151")
-
-
-@bot.command(name="prometheus")
-async def cmd_prometheus(ctx, *, arg: str = None):
-    await start_job(ctx, arg, "engine", "prometheus")
-
-
-@bot.command(name="moonveil", aliases=["moonsec", "msd"])
-async def cmd_moonveil(ctx, *, arg: str = None):
-    await start_job(ctx, arg, "engine", "moonveil")
-
-
-@bot.command(name="goofy", aliases=["goofyscator", "gv11d"])
-async def cmd_goofy(ctx, *, arg: str = None):
-    await start_job(ctx, arg, "engine", "goofy")
-
-
-# ============================================================================
-# INICIO DEL BOT
-# ============================================================================
-if __name__ == "__main__":
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    if not TOKEN:
-        logger.critical("¡Falta la variable de entorno DISCORD_TOKEN!")
-    else:
-        bot.run(TOKEN)
