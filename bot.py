@@ -186,7 +186,9 @@ intents.message_content = True
 bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
 # 0x000000 se ve como "sin color"; 0x010101 pinta la franja realmente negra.
-EMBED_COLOR = discord.Color.from_rgb(1, 1, 1)
+EMBED_COLOR = discord.Color.from_rgb(1, 1, 1)   # embeds neutros (carga, listas)
+COLOR_OK = discord.Color.from_rgb(46, 204, 113)  # verde: salió bien
+COLOR_ERR = discord.Color.from_rgb(231, 76, 60)  # rojo: falló
 
 STATS = {"started": time.time(), "jobs_ok": 0, "jobs_failed": 0}
 
@@ -225,27 +227,27 @@ def clamp(text, limit=4000):
     return cut
 
 
-def build_embed(head, body="", emoji=EMOJI_CORRECT):
+def build_embed(head, body="", emoji=EMOJI_CORRECT, color=EMBED_COLOR):
     desc = f"# {emoji} {head}"
     if body:
         desc += f"\n{body}"
-    return discord.Embed(description=clamp(desc), color=EMBED_COLOR)
+    return discord.Embed(description=clamp(desc), color=color)
 
 
 def e_ok(head, body=""):
-    return build_embed(head, body, EMOJI_CORRECT)
+    return build_embed(head, body, EMOJI_CORRECT, COLOR_OK)
 
 
 def e_err(head, body=""):
-    return build_embed(head, body, EMOJI_ERROR)
+    return build_embed(head, body, EMOJI_ERROR, COLOR_ERR)
 
 
 def e_load(head, body=""):
-    return build_embed(head, body, EMOJI_LOADING)
+    return build_embed(head, body, EMOJI_LOADING, EMBED_COLOR)
 
 
 def e_list(head, body=""):
-    return build_embed(head, body, EMOJI_LIST)
+    return build_embed(head, body, EMOJI_LIST, EMBED_COLOR)
 
 
 def plain_text(embed):
@@ -1210,6 +1212,10 @@ WHILE_TRUE = re.compile(r"while\s+true\s+do")
 IB_PARAMS = re.compile(r"\breturn\s*\(\s*function\s*\(\s*(?:[A-Za-z_]\w*\s*,\s*){15,}")
 IB_NUMTABLE = re.compile(r"\blocal\s+[A-Za-z_]\w*\s*=\s*\{\s*-?\d+(?:\s*,\s*-?\d+){20,}")
 
+# --- banners (encabezados que el propio ofuscador deja en el archivo)
+MOON_BANNER = re.compile(r"protected (?:with|using) moonsec v3\b", re.I)
+GOOFY_BANNER_ANY = re.compile(r"protected by goofyscator v11 beta-1", re.I)
+
 # --- Prometheus
 PROM_WRAP = re.compile(r"\A\s*(?:--[^\n]*\n\s*)*return\s*\(?\s*function\s*\(\s*\.\.\.\s*\)")
 PROM_SELECT = re.compile(r"select\s*\(\s*[\"']#[\"']\s*,\s*\.\.\.\s*\)")
@@ -1329,8 +1335,35 @@ class Detector:
         return min(score, 1.0), ev
 
     @staticmethod
-    def scan(code):
-        """Devuelve la lista de Finding ordenada por puntaje (mayor primero)."""
+    def _apply_banners(s, findings):
+        """Un banner o encabezado del ofuscador es prueba directa: sube la confianza a 95%."""
+        by_family = {f.family: f for f in findings}
+        head = s[:2000]
+
+        m = LUR_HEADER.search(head)
+        if m and m.group(1) == "15":
+            f = by_family["luraph"]
+            f.hint = f"15.{m.group(2)}"
+            f.version = f.hint
+            f.name = "Luraph v15.1" if f.hint == "15.1" else "Luraph v15"
+            f.score = max(f.score, 0.95)
+            f.evidence.insert(0, f"header «Luraph Obfuscator v{f.hint}»")
+
+        if MOON_BANNER.search(head):
+            f = by_family["moonsec"]
+            f.score = max(f.score, 0.95)
+            f.evidence.insert(0, "banner «protected with MoonSec V3»")
+
+        if GOOFY_BANNER_ANY.search(head):
+            f = by_family["goofy"]
+            f.score = max(f.score, 0.95)
+            f.evidence.insert(0, "banner «protected by Goofyscator V11 BETA-1»")
+        return findings
+
+    @staticmethod
+    def scan(code, use_banners=True):
+        """Devuelve la lista de Finding ordenada por puntaje (mayor primero).
+        use_banners=False ignora encabezados y mira solo la estructura (para validar salidas)."""
         s = Detector._sample(code)
         findings = []
 
@@ -1356,6 +1389,8 @@ class Detector:
         p_score, p_ev = Detector._prometheus(s)
         findings.append(Finding("prometheus", "Prometheus", "Unknown", p_score, p_ev))
 
+        if use_banners:
+            findings = Detector._apply_banners(s, findings)
         findings.sort(key=lambda f: f.score, reverse=True)
         return findings
 
@@ -1598,6 +1633,7 @@ def build_analyze_embed(profile, findings, src):
 # ============================================================================
 class DeobfError(Exception):
     """La herramienta no pudo desofuscar el script (mensaje corto para el usuario)."""
+    diag = ""          # salida completa del proceso, si la hay
 
 
 class MissingDependency(DeobfError):
@@ -1628,7 +1664,9 @@ async def run_stage(args, deadline, label, cwd=None, check=True):
         raise DeobfError(f"{label}: tiempo agotado")
     if check and proc.returncode:
         diag = (stderr or stdout).decode("utf-8", "replace").strip()
-        raise DeobfError(f"{label} falló: {diag[-600:]}")    # la causa suele estar al final
+        err = DeobfError(f"{label} falló: {diag[-600:]}")    # la causa suele estar al final
+        err.diag = diag
+        raise err
     return stdout, stderr
 
 
@@ -1638,6 +1676,23 @@ def _same_text(a, b):
 
 def _node():
     return shutil.which("node") or shutil.which("nodejs")
+
+
+def explain_moonsec_failure(diag):
+    """Convierte el error del backend de MoonSec en un mensaje útil (no un stack trace de .NET)."""
+    text = (diag or "").strip()
+    m = re.search(r"System\.(\w+Exception)", text)
+    if m and m.group(1) in ("NullReferenceException", "IndexOutOfRangeException", "ArgumentOutOfRangeException", "InvalidOperationException"):
+        return ("This script does not match the MoonSec V3 layout that the backend supports "
+                f"({m.group(1)} while analysing the VM). The file is fine; this build of MoonSec is not supported.")
+    if "Unsupported MoonSec key layout" in text:
+        return "Unsupported MoonSec key layout: the decryption keys are not in a form the backend handles."
+    if "tiempo agotado" in text:
+        return "MoonSec took too long and was stopped."
+    if "Invalid Lua" in text or "Oversized register" in text:
+        return "The recovered bytecode did not pass the Lua 5.1 validation."
+    first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "unknown error")
+    return f"MoonSec backend failed: {first[:200]}"
 
 
 async def engine_luraph151(code, uid, timeout):
@@ -1732,7 +1787,10 @@ async def engine_moonveil(code, uid, timeout):
 
         deadline = asyncio.get_running_loop().time() + timeout
         # Etapa 1: MoonSec V3 -> bytecode Lua 5.1
-        await run_stage([dotnet_bin, MOON_DLL, "-dev", "-i", input_file, "-o", bytecode_file], deadline, "MoonSec")
+        try:
+            await run_stage([dotnet_bin, MOON_DLL, "-dev", "-i", input_file, "-o", bytecode_file], deadline, "MoonSec")
+        except DeobfError as e:
+            raise DeobfError(explain_moonsec_failure(e.diag or str(e))) from None
         if not os.path.isfile(bytecode_file):
             raise DeobfError("MoonSec no generó bytecode.")
         with open(bytecode_file, "rb") as f:
@@ -1740,7 +1798,10 @@ async def engine_moonveil(code, uid, timeout):
                 raise DeobfError("MoonSec no generó bytecode Lua 5.1 válido.")
 
         # Etapa 2: bytecode -> código fuente con unluac
-        await run_stage([java_bin, "-Xmx512m", "-jar", MOON_JAR, "--nodebug", "-o", output_file, bytecode_file], deadline, "unluac")
+        try:
+            await run_stage([java_bin, "-Xmx512m", "-jar", MOON_JAR, "--nodebug", "-o", output_file, bytecode_file], deadline, "unluac")
+        except DeobfError as e:
+            raise DeobfError("unluac: " + (e.diag or str(e)).splitlines()[-1][:200] if (e.diag or "").strip() else str(e)) from None
         if not os.path.isfile(output_file):
             raise DeobfError("unluac no generó salida.")
         with open(output_file, "r", encoding="utf-8", errors="ignore") as f:
@@ -1885,7 +1946,7 @@ def validate_result(original, result, family):
         return False, "la salida es binaria, no es código Lua"
     if not re.search(r"\b(local|function|end|return|print|if|for|while)\b", result):
         return False, "la salida no parece código Lua"
-    top = Detector.scan(result)[0]
+    top = Detector.scan(result, use_banners=False)[0]
     if top.score >= CONFIDENT and top.family == family:
         return False, f"la salida sigue ofuscada ({top.name})"
     return True, ""
@@ -2027,7 +2088,8 @@ async def deliver_result(ctx, msg, title, result_code, src, start_time):
         body = (
             f"Time: {format_duration(time.time() - start_time)}\n"
             f"Input: {format_size(src.size)}\n"
-            f"Output: {format_size(output_size)}\n\n"
+            f"Output: {format_size(output_size)}\n"
+            f"Source: {src.link}\n\n"
             f"Download Deobfuscated File:"
         )
         try:
