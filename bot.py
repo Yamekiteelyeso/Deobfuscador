@@ -1840,7 +1840,7 @@ async def engine_goofy(code, uid, timeout):
         if not os.path.isfile(os.path.join(GOOFY_BIN, exe)):
             missing.append(f"binario Linux `{exe}` en `{GOOFY_BIN}/`")
     if missing:
-        raise MissingDependency(", ".join(missing))
+        raise MissingDependency(", ".join(missing) + ". Solución: ejecuta una vez `bash setup_luau.sh` en el servidor.")
 
     # El motor exige la primera línea de V11; si el script llega sin ella (ya se identificó por
     # su estructura), se la repone para que la herramienta acepte el archivo.
@@ -1890,7 +1890,7 @@ async def engine_luraph15(code, uid, timeout):
         if not os.path.isfile(os.path.join(LURAPH15_BIN, exe)):
             missing.append(f"binario Linux `{exe}` en `{LURAPH15_BIN}/`")
     if missing:
-        raise MissingDependency(", ".join(missing))
+        raise MissingDependency(", ".join(missing) + ". Solución: ejecuta una vez `bash setup_luau.sh` en el servidor.")
 
     work_dir = tempfile.mkdtemp(prefix=f"lph15_{uid}_")
     try:
