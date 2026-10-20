@@ -2,7 +2,7 @@
 Lexy Hub - Bot de desofuscación de scripts Lua / Luau para Discord.
 
 Comandos
-    .luraph / .luraph15 / .luraph151   Luraph v15 y v15.1
+    .luraph / .luraph151               Luraph v15.1 (y v15 con el mismo motor)
     .prometheus                        Prometheus
     .moonveil (.moonsec .msd)          MoonSec V3
     .goofy (.goofyscator .gv11d)       Goofyscator V11
@@ -99,10 +99,6 @@ MOON_DIR = "moonsec-v3"
 MOON_DLL = os.path.join(MOON_DIR, "bin", "Release", "net9.0", "MoonsecDeobfuscator.dll")
 MOON_JAR = os.path.join(MOON_DIR, "deps", "unluac", "unluac.jar")
 
-LURAPH15_ZIP = "luraphv15.zip"                # motor de Luraph v15 (Python + luau)
-LURAPH15_DIR = "Deobfuscator"
-LURAPH15_BIN = os.path.join(LURAPH15_DIR, "deobf", "bin")
-LURAPH15_SCRIPT = os.path.join(LURAPH15_DIR, "deobf", "deob.py")
 
 GOOFY_ZIP = "goofyscator-deobf.zip"
 GOOFY_DIR = "goofyscator-deobf"
@@ -134,6 +130,40 @@ def chmod_exec(folder, names):
                 logger.error(f"No se pudo dar permisos a {p}: {e}")
 
 
+LUAU_RELEASE_URL = os.getenv("LUAU_RELEASE_URL", "").rstrip("/")   # p. ej. https://github.com/USUARIO/REPO/releases/download/luau-0.739
+
+
+def ensure_luau_binaries():
+    """Si faltan luau / luau-ast y LUAU_RELEASE_URL está definida, los descarga de la Release de GitHub."""
+    import urllib.request
+    targets = []
+    if os.path.isdir(GOOFY_ENGINES):
+        targets.append(GOOFY_BIN)
+    for folder in targets:
+        for exe in ("luau", "luau-ast"):
+            path = os.path.join(folder, exe)
+            if os.path.isfile(path):
+                continue
+            if not LUAU_RELEASE_URL:
+                logger.warning(f"Falta {path}. Define LUAU_RELEASE_URL o ejecuta setup_luau.sh.")
+                continue
+            tmp = path + ".part"
+            try:
+                os.makedirs(folder, exist_ok=True)
+                with urllib.request.urlopen(f"{LUAU_RELEASE_URL}/{exe}", timeout=60) as resp, open(tmp, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                with open(tmp, "rb") as f:
+                    if f.read(4) != b"\x7fELF":
+                        raise ValueError("el archivo descargado no es un binario Linux")
+                os.replace(tmp, path)
+                os.chmod(path, 0o755)
+                logger.info(f"Descargado {path}")
+            except Exception as e:
+                logger.error(f"No se pudo descargar {exe}: {e}")
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+
+
 def cleanup_stale_files():
     """Borra temporales que un cierre brusco anterior pudo dejar."""
     patterns = re.compile(r"^(?:input_|output_|prom_input_|prom_output_|executable_script_|get_|beautify_|fetched_).*\.lua$")
@@ -162,9 +192,7 @@ extract_zip(LURAPH_ZIP, LURAPH_DIR, LURAPH_DIR)
 extract_zip(PROM_ZIP, PROM_DIR)
 extract_zip(MOON_ZIP, MOON_DIR)
 extract_zip(GOOFY_ZIP, GOOFY_DIR)
-extract_zip(LURAPH15_ZIP, LURAPH15_DIR)
 
-chmod_exec(LURAPH15_BIN, ("luau", "luau-ast"))
 if os.path.isdir(GOOFY_ENGINES):
     chmod_exec(GOOFY_BIN, ("luau", "luau-ast"))
     # El zip no trae package.json: sin "type": "module" los .ts/.mjs no resuelven sus imports.
@@ -176,6 +204,7 @@ if os.path.isdir(GOOFY_ENGINES):
     except Exception as e:
         logger.error(f"Error preparando Goofyscator: {e}")
 
+ensure_luau_binaries()
 cleanup_stale_files()
 
 # ============================================================================
@@ -298,6 +327,20 @@ def format_duration(seconds):
         return f"{seconds:.1f}s"
     m, s = divmod(int(seconds), 60)
     return f"{m}m {s}s"
+
+
+def make_preview(text, max_lines=8, max_line_len=110, max_total=900):
+    """Vista previa segura para el embed: líneas recortadas y sin romper el bloque de código."""
+    lines = text.splitlines()
+    out = []
+    for line in lines[:max_lines]:
+        out.append(line if len(line) <= max_line_len else line[:max_line_len] + " ...")
+    preview = "\n".join(out)
+    if len(preview) > max_total:
+        preview = preview[:max_total] + " ..."
+    if len(lines) > max_lines:
+        preview += "\n--"
+    return preview.replace("```", "'''")
 
 
 def _remove(*paths):
@@ -1626,8 +1669,6 @@ def build_analyze_embed(profile, findings, src):
     if notes:
         lines += [""] + notes
     return e_ok("SCRIPT ANALYSIS", "\n".join(lines))
-
-
 # ============================================================================
 # MOTORES DE DESOFUSCACIÓN (devuelven el código o lanzan DeobfError)
 # ============================================================================
@@ -1882,42 +1923,7 @@ async def engine_goofy(code, uid, timeout):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-async def engine_luraph15(code, uid, timeout):
-    missing = []
-    if not os.path.isfile(LURAPH15_SCRIPT):
-        missing.append(f"archivos de `{LURAPH15_ZIP}` (¿está junto al bot?)")
-    for exe in ("luau", "luau-ast"):
-        if not os.path.isfile(os.path.join(LURAPH15_BIN, exe)):
-            missing.append(f"binario Linux `{exe}` en `{LURAPH15_BIN}/`")
-    if missing:
-        raise MissingDependency(", ".join(missing) + ". Solución: ejecuta una vez `bash setup_luau.sh` en el servidor.")
-
-    work_dir = tempfile.mkdtemp(prefix=f"lph15_{uid}_")
-    try:
-        input_file = os.path.join(work_dir, "input.lua")
-        output_file = os.path.join(work_dir, "output.lua")
-        with open(input_file, "w", encoding="utf-8") as f:
-            f.write(code)
-
-        deadline = asyncio.get_running_loop().time() + timeout
-        await run_stage(
-            [sys.executable, os.path.abspath(LURAPH15_SCRIPT), input_file, "-o", output_file, "--obfuscator", "luraph_v15"],
-            deadline, "Luraph v15", cwd=LURAPH15_DIR,
-        )
-        if not os.path.isfile(output_file):
-            raise DeobfError("El desofuscador no generó resultado.")
-        with open(output_file, "r", encoding="utf-8", errors="ignore") as f:
-            result_code = f.read()
-        if not result_code.strip():
-            raise DeobfError("El desofuscador produjo una salida vacía.")
-        return result_code.strip()    # ya viene formateado por el lifter
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-
-
 ENGINES = {
-    "luraph15":   {"label": "Luraph v15",   "family": "luraph",     "fn": engine_luraph15,   "title": "LURAPH V15 DEOBFUSCATED",
-                   "wait": "Devirtualizando la VM (puede tardar)..."},
     "luraph151":  {"label": "Luraph v15.1", "family": "luraph",     "fn": engine_luraph151,  "title": "LURAPH V15.1 DEOBFUSCATED",
                    "wait": "Procesando capas de virtualización..."},
     "prometheus": {"label": "Prometheus",   "family": "prometheus", "fn": engine_prometheus, "title": "PROMETHEUS DEOBFUSCATED",
@@ -1931,7 +1937,7 @@ ENGINES = {
 
 def luraph_plan(finding):
     """Orden de los motores de Luraph: v15.1 primero solo si el encabezado lo dice."""
-    return ["luraph151", "luraph15"] if finding.hint == "15.1" else ["luraph15", "luraph151"]
+    return ["luraph151"]     # un solo motor para Luraph v15 y v15.1
 
 
 def validate_result(original, result, family):
@@ -2079,18 +2085,20 @@ def ui_waiting(position, running, waiting):
 # ENTREGA DEL RESULTADO
 # ============================================================================
 async def deliver_result(ctx, msg, title, result_code, src, start_time):
+    """Embed verde con vista previa; el archivo va en un mensaje aparte debajo."""
     final_text = f"-- Deobfuscado por Lexy Deobf\n\n{result_code}\n"
     path = f"executable_script_{ctx.message.id}.lua"
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(final_text)
         output_size = os.path.getsize(path)
+        elapsed = time.time() - start_time
         body = (
-            f"Time: {format_duration(time.time() - start_time)}\n"
-            f"Input: {format_size(src.size)}\n"
-            f"Output: {format_size(output_size)}\n"
-            f"Source: {src.link}\n\n"
-            f"Download Deobfuscated File:"
+            "**Output Preview**\n"
+            f"```lua\n{make_preview(final_text)}\n```\n"
+            f"Source: {src.link}\n"
+            f"-# input: {format_size(src.size)} · output: {format_size(output_size)} · took: {elapsed:.1f}s\n\n"
+            "**Output File:**"
         )
         try:
             await msg.delete()
@@ -2225,7 +2233,7 @@ async def cmd_help(ctx):
     body = (
         "Usa los comandos con un archivo adjunto, una URL, un bloque de código o respondiendo a un mensaje.\n\n"
         "**Deobfuscators**\n"
-        "• `.luraph` `.luraph15` `.luraph151`\n"
+        "• `.luraph`\n"
         "• `.prometheus`\n"
         "• `.moonveil`\n"
         "• `.goofy`\n\n"
@@ -2245,7 +2253,7 @@ async def cmd_list(ctx):
     body = (
         "Lista de deobfuscadores activos:\n\n"
         f"**1. Luraph v15 / v15.1 {EMOJI_LURAPH} **\n"
-        "• Comando: `.luraph` o `.luraph15` / `.luraph151`\n\n"
+        "• Comando: `.luraph`\n\n"
         f"**2. Prometheus {EMOJI_PROMETHEUS} **\n"
         "• Comando: `.prometheus`\n\n"
         "**3. MoonSec V3**\n"
@@ -2390,11 +2398,6 @@ async def cmd_beautify(ctx, *, arg: str = None):
 @bot.command(name="luraph")
 async def cmd_luraph(ctx, *, arg: str = None):
     await start_job(ctx, arg, "luraph")
-
-
-@bot.command(name="luraph15")
-async def cmd_luraph15(ctx, *, arg: str = None):
-    await start_job(ctx, arg, "engine", "luraph15")
 
 
 @bot.command(name="luraph151")
