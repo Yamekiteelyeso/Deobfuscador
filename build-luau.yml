@@ -1,0 +1,77 @@
+name: Build Luau binaries
+
+# Compila luau (parcheado) y luau-ast para Linux x64.
+# Se ejecuta a mano: pestaña Actions > Build Luau binaries > Run workflow.
+# Al terminar, descarga el artefacto "luau-binaries" y copia los dos archivos
+# a Deobfuscator/deobf/bin/ en tu servidor.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Instalar herramientas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ make git
+
+      - name: Descargar Luau 0.739
+        run: git clone -q --depth 1 --branch 0.739 https://github.com/luau-lang/luau.git luau
+
+      - name: Aplicar parche (vector metatable escribible)
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("luau/VM/src/lveclib.cpp")
+          t = p.read_text(encoding="utf-8")
+          FREEZE = "    lua_setreadonly(L, -1, true);\n    lua_pop(L, 1); // pop the metatable\n"
+          PATCHED = "    // deobf: left writable, envlog.luau adds Roblox's Vector3 members\n    lua_pop(L, 1); // pop the metatable\n"
+          if PATCHED in t:
+              print("parche ya aplicado")
+          else:
+              assert t.count(FREEZE) == 1, "lveclib.cpp cambió: revisar el parche"
+              p.write_text(t.replace(FREEZE, PATCHED), encoding="utf-8")
+              print("parche aplicado")
+          PY
+
+      - name: Compilar
+        run: |
+          cmake -S luau -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLUAU_BUILD_TESTS=OFF \
+            -DLUAU_STATIC_CRT=ON \
+            -DCMAKE_C_COMPILER=gcc \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static"
+          cmake --build build --config Release --target Luau.Repl.CLI Luau.Ast.CLI --parallel
+
+      - name: Reunir binarios
+        run: |
+          mkdir -p out
+          LUAU=$(find build -type f \( -name luau -o -name Luau.Repl.CLI \) -perm -u+x | head -n 1)
+          AST=$(find build -type f \( -name luau-ast -o -name Luau.Ast.CLI \) -perm -u+x | head -n 1)
+          if [ -z "$LUAU" ] || [ -z "$AST" ]; then
+            echo "No encontré los binarios. Archivos ejecutables generados:"
+            find build -type f -perm -u+x | head -50
+            exit 1
+          fi
+          cp "$LUAU" out/luau
+          cp "$AST" out/luau-ast
+          chmod 755 out/luau out/luau-ast
+          file out/luau out/luau-ast || true
+          ./out/luau --version || true
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: luau-binaries
+          path: out/
+          retention-days: 30
